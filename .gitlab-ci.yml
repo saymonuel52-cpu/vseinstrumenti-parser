@@ -1,0 +1,202 @@
+image: mcr.microsoft.com/dotnet/sdk:8.0
+
+variables:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  NUGET_PACKAGES: "$CI_PROJECT_DIR/.nuget/packages"
+
+cache:
+  key: "$CI_COMMIT_REF_SLUG"
+  paths:
+    - .nuget/packages
+    - **/bin
+    - **/obj
+  policy: pull-push
+
+stages:
+  - build
+  - test
+  - quality
+  - security
+  - publish
+  - deploy
+
+before_script:
+  - dotnet --version
+  - dotnet restore
+
+build:
+  stage: build
+  script:
+    - dotnet build --configuration Release --no-restore
+  artifacts:
+    paths:
+      - "**/bin/Release/**/*.dll"
+      - "**/bin/Release/**/*.exe"
+    expire_in: 1 week
+
+unit-tests:
+  stage: test
+  script:
+    - dotnet test --configuration Release --no-build --verbosity normal --filter "Category=Unit"
+  artifacts:
+    reports:
+      junit:
+        - "**/TestResults/*.xml"
+    paths:
+      - "**/TestResults/**/*"
+    expire_in: 1 week
+  coverage: '/Total.*?\|.*?\|\s+(\d+\.\d+)/'
+
+integration-tests:
+  stage: test
+  script:
+    - |
+      # Запуск WireMock для интеграционных тестов
+      wget -O wiremock.jar https://repo1.maven.org/maven2/com/github/tomakehurst/wiremock-jre8-standalone/2.35.0/wiremock-jre8-standalone-2.35.0.jar
+      java -jar wiremock.jar --port 8080 &
+      sleep 5
+      dotnet test --configuration Release --no-build --verbosity normal --filter "Category=Integration"
+  artifacts:
+    reports:
+      junit:
+        - "**/TestResults/*.xml"
+    paths:
+      - "**/TestResults/**/*"
+    expire_in: 1 week
+
+code-quality:
+  stage: quality
+  script:
+    - dotnet format --verify-no-changes --verbosity diagnostic
+    - dotnet build --configuration Release -p:EnableNETAnalyzers=true -p:AnalysisLevel=recommended
+  allow_failure: true
+
+security-scan:
+  stage: security
+  script:
+    - dotnet list package --vulnerable --include-transitive
+    - |
+      # Проверка зависимостей на уязвимости
+      if command -v trivy &> /dev/null; then
+        trivy fs --severity HIGH,CRITICAL .
+      fi
+  allow_failure: true
+  artifacts:
+    reports:
+      sast: gl-sast-report.json
+
+sonarqube-check:
+  stage: quality
+  image: sonarsource/sonar-scanner-cli:latest
+  script:
+    - |
+      dotnet sonarscanner begin \
+        /k:"${CI_PROJECT_NAMESPACE}_${CI_PROJECT_NAME}" \
+        /n:"${CI_PROJECT_NAME}" \
+        /v:"${CI_COMMIT_SHORT_SHA}" \
+        /d:sonar.host.url="${SONAR_HOST_URL}" \
+        /d:sonar.login="${SONAR_TOKEN}" \
+        /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml"
+    - dotnet build --configuration Release
+    - dotnet test --configuration Release --no-build --collect:"XPlat Code Coverage" --settings coverlet.runsettings
+    - dotnet sonarscanner end /d:sonar.login="${SONAR_TOKEN}"
+  only:
+    - main
+    - develop
+    - merge_requests
+  dependencies:
+    - build
+
+publish-nuget:
+  stage: publish
+  script:
+    - |
+      VERSION=$(date +'%Y.%m.%d.%H%M')
+      dotnet pack --configuration Release \
+        -p:PackageVersion=$VERSION \
+        -p:IncludeSymbols=true \
+        -p:SymbolPackageFormat=snupkg \
+        --output ./packages
+    - |
+      # Публикация в GitLab Package Registry
+      for package in ./packages/*.nupkg; do
+        curl --header "Job-Token: ${CI_JOB_TOKEN}" \
+          --upload-file $package \
+          "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/nuget"
+      done
+  artifacts:
+    paths:
+      - ./packages/*.nupkg
+    expire_in: 1 month
+  only:
+    - tags
+    - main
+
+deploy-staging:
+  stage: deploy
+  script:
+    - |
+      echo "Deploying to staging environment..."
+      # Пример деплоя через SSH
+      # ssh user@staging-server "mkdir -p /opt/vseinstrumenti-parser"
+      # scp -r ./publish/* user@staging-server:/opt/vseinstrumenti-parser/
+      # ssh user@staging-server "systemctl restart vseinstrumenti-parser-staging"
+    - echo "Staging deployment completed"
+  environment:
+    name: staging
+    url: https://staging.example.com
+  only:
+    - main
+  when: manual
+
+deploy-production:
+  stage: deploy
+  script:
+    - |
+      echo "Deploying to production environment..."
+      # Сборка self-contained приложения
+      dotnet publish --configuration Release \
+        --runtime linux-x64 \
+        --self-contained true \
+        --output ./publish/linux-x64 \
+        -p:PublishSingleFile=true \
+        -p:PublishTrimmed=true
+      
+      # Пример деплоя
+      # scp -r ./publish/linux-x64/* user@production-server:/opt/vseinstrumenti-parser/
+      # ssh user@production-server "systemctl restart vseinstrumenti-parser"
+    - echo "Production deployment completed"
+  environment:
+    name: production
+    url: https://production.example.com
+  only:
+    - tags
+  when: manual
+
+pages:
+  stage: deploy
+  script:
+    - |
+      # Генерация документации
+      dotnet tool install -g docfx
+      docfx docfx.json
+      mv _site public
+  artifacts:
+    paths:
+      - public
+  only:
+    - main
+
+notify:
+  stage: .post
+  script:
+    - |
+      if [ "$CI_JOB_STATUS" == "success" ]; then
+        echo "✅ Pipeline completed successfully"
+        # Отправка уведомления в Slack/Telegram
+        # curl -X POST -H 'Content-type: application/json' --data "{\"text\":\"✅ Pipeline $CI_PIPELINE_ID completed successfully\"}" $SLACK_WEBHOOK
+      else
+        echo "❌ Pipeline failed"
+        # curl -X POST -H 'Content-type: application/json' --data "{\"text\":\"❌ Pipeline $CI_PIPELINE_ID failed\"}" $SLACK_WEBHOOK
+      fi
+  when: always

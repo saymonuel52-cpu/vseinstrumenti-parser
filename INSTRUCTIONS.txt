@@ -1,0 +1,84 @@
+ИНСТРУКЦИЯ ПО ЗАПУСКУ ПАРСЕРА VSEINSTRUMENTI.RU
+
+1. ПРОВЕРКА СТРУКТУРЫ ПРОЕКТА
+   Убедитесь, что в папке проекта присутствуют следующие файлы:
+   - Program.cs
+   - VseinstrumentiParser.csproj
+   - Models/Category.cs
+   - Models/Product.cs
+   - Interfaces/ICategoryParser.cs
+   - Interfaces/IProductParser.cs
+   - Services/HttpClientService.cs
+   - Services/CategoryParser.cs
+   - Services/ProductParser.cs
+   - Services/VseinstrumentiParserService.cs
+   - Utilities/RetryPolicy.cs
+
+2. ПРОВЕРКА УСТАНОВКИ .NET
+   Откройте командную строку или PowerShell и выполните:
+     dotnet --version
+   
+   Если команда не найдена, установите .NET 8.0 или выше:
+   https://dotnet.microsoft.com/download
+
+3. УСТАНОВКА ЗАВИСИМОСТЕЙ
+   В папке проекта выполните:
+     dotnet restore
+
+4. КОМПИЛЯЦИЯ ПРОЕКТА
+     dotnet build
+
+5. ЗАПУСК ПАРСЕРА
+   Для тестового запуска:
+     dotnet run
+   
+   Для экспорта результатов в CSV файл:
+     dotnet run > vseinstrumenti_export.csv
+
+6. ВОЗМОЖНЫЕ ОШИБКИ КОМПИЛЯЦИИ
+   Если возникают ошибки компиляции, проверьте:
+   - Наличие пакета AngleSharp (должен быть указан в .csproj)
+   - Корректность пространств имен
+   - Отсутствие синтаксических ошибок в коде
+
+   Основные возможные ошибки и их решения:
+   * "The type or namespace name 'AngleSharp' could not be found"
+     - Выполните: dotnet add package AngleSharp
+   
+   * "CS0246: The type or namespace name '...' could not be found"
+     - Проверьте using-директивы в начале файлов
+   
+   * "CS1061: '...' does not contain a definition for '...'"
+     - Возможно, изменилась структура сайта, требуется обновить CSS-селекторы
+
+7. НАСТРОЙКА ПАРСЕРА
+   При необходимости можно изменить:
+   - User-Agent в HttpClientService.cs
+   - Задержки между запросами в RetryPolicy.cs
+   - Максимальное количество попыток повтора
+   - Селекторы для парсинга в CategoryParser.cs и ProductParser.cs
+
+8. ЭКСПОРТ ДАННЫХ
+   Парсер поддерживает экспорт в CSV через метод ExportToCsvAsync.
+   В примере Program.cs показано, как использовать этот метод.
+
+9. ЛОГИРОВАНИЕ
+   Все этапы парсинга логируются в консоль с временными метками.
+   Формат: [HH:mm:ss] Сообщение
+
+10. ОБРАБОТКА ОШИБОК
+    Парсер использует экспоненциальную задержку при ошибках сети.
+    Максимальное количество попыток: 5.
+    Начальная задержка: 1 секунда, множитель: 2.0.
+
+ДОПОЛНИТЕЛЬНАЯ ИНФОРМАЦИЯ
+- Исходный код полностью асинхронный
+- Поддерживается пакетный парсинг товаров
+- Автоматическое управление Cookie
+- Подробная документация в README.md
+
+Если возникли проблемы, проверьте:
+1. Наличие интернет-соединения
+2. Доступность сайта vseinstrumenti.ru
+3. Соответствие структуры HTML сайта ожидаемым селекторам
+4. Отсутствие блокировок со стороны сайта (используйте задержки между запросами)
