@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using VseinstrumentiParser.Interfaces;
 using VseinstrumentiParser.Models.Configuration;
+using VseinstrumentiParser.Services;
 using VseinstrumentiParser.Utilities;
 
 namespace VseinstrumentiParser.Services.DependencyInjection
@@ -128,6 +131,13 @@ namespace VseinstrumentiParser.Services.DependencyInjection
             services.AddSingleton<IProductParser, ProductParser>();
             services.AddSingleton<VseinstrumentiParserService>();
             services.AddSingleton<VoltParserService>();
+            
+            // Регистрация парсеров для 220-volt.ru
+            services.AddSingleton<VoltCategoryParser>();
+            services.AddSingleton<VoltProductParser>();
+            
+            // Регистрация фабрики парсеров
+            services.AddSingleton<IParserFactory, ParserFactory>();
 
             // Регистрация сервисов экспорта
             services.AddSingleton<ExportService>();

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
 namespace VseinstrumentiParser.Models.Configuration
@@ -6,6 +7,12 @@ namespace VseinstrumentiParser.Models.Configuration
     {
         [JsonPropertyName("BaseUrls")]
         public BaseUrlsSettings BaseUrls { get; set; } = new BaseUrlsSettings();
+
+        [JsonPropertyName("Sources")]
+        public List<SourceSettings> Sources { get; set; } = new List<SourceSettings>();
+
+        [JsonPropertyName("Parallelism")]
+        public ParallelismSettings Parallelism { get; set; } = new ParallelismSettings();
 
         [JsonPropertyName("RequestSettings")]
         public RequestSettings RequestSettings { get; set; } = new RequestSettings();
@@ -75,5 +82,29 @@ namespace VseinstrumentiParser.Models.Configuration
 
         [JsonPropertyName("CompressOutput")]
         public bool CompressOutput { get; set; } = false;
+    }
+
+    public class SourceSettings
+    {
+        [JsonPropertyName("Name")]
+        public string Name { get; set; } = "";
+
+        [JsonPropertyName("BaseUrl")]
+        public string BaseUrl { get; set; } = "";
+
+        [JsonPropertyName("CategoryPath")]
+        public string CategoryPath { get; set; } = "";
+
+        [JsonPropertyName("ParserType")]
+        public string ParserType { get; set; } = "";
+    }
+
+    public class ParallelismSettings
+    {
+        [JsonPropertyName("MaxConcurrentParsers")]
+        public int MaxConcurrentParsers { get; set; } = 2;
+
+        [JsonPropertyName("DelayBetweenRequestsMs")]
+        public int DelayBetweenRequestsMs { get; set; } = 1000;
     }
 }

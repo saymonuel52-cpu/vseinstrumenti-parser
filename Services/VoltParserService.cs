@@ -1,5 +1,6 @@
 using VseinstrumentiParser.Interfaces;
 using VseinstrumentiParser.Models;
+using VseinstrumentiParser.Services.Metrics;
 using VseinstrumentiParser.Utilities;
 
 namespace VseinstrumentiParser.Services
@@ -14,6 +15,7 @@ namespace VseinstrumentiParser.Services
         private readonly IProductParser _productParser;
         private readonly ILogger _logger;
         private readonly RetryPolicy _retryPolicy;
+        private readonly IParserMetrics _metrics;
         private bool _disposed = false;
 
         /// <summary>

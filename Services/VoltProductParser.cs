@@ -122,18 +122,30 @@ namespace VseinstrumentiParser.Services
         /// </summary>
         private string ExtractProductName(IDocument document)
         {
-            // Типичные селекторы для 220-volt
-            var nameElement = document.QuerySelector(".product-title, h1.product-name, .item-title, .goods-header h1");
-            if (nameElement != null)
+            // Приоритетные селекторы для 220-volt.ru (требуют проверки на реальном сайте)
+            var selectors = new[]
             {
-                return nameElement.TextContent?.Trim() ?? "Неизвестно";
-            }
-            
-            // Альтернативные селекторы
-            nameElement = document.QuerySelector("h1");
-            if (nameElement != null && !string.IsNullOrEmpty(nameElement.TextContent?.Trim()))
+                "h1.product-title",
+                "h1[itemprop='name']",
+                ".goods-header h1",
+                "h1.product-name",
+                ".item-title h1",
+                ".product-name h1",
+                "h1", // Fallback - первый h1
+            };
+
+            foreach (var selector in selectors)
             {
-                return nameElement.TextContent.Trim();
+                var nameElement = document.QuerySelector(selector);
+                if (nameElement != null)
+                {
+                    var text = nameElement.TextContent?.Trim();
+                    if (!string.IsNullOrEmpty(text) && text.Length > 2)
+                    {
+                        // Очистка от лишних пробелов и переносов
+                        return System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
+                    }
+                }
             }
             
             return "Неизвестно";
@@ -144,25 +156,66 @@ namespace VseinstrumentiParser.Services
         /// </summary>
         private void ExtractPrice(IDocument document, Product product)
         {
-            // Текущая цена (селекторы 220-volt)
-            var priceElement = document.QuerySelector(".price, .product-price, .current-price, .goods-price");
-            if (priceElement != null)
+            // Приоритетные селекторы для текущей цены
+            var priceSelectors = new[]
             {
-                var priceText = priceElement.TextContent?.Trim();
-                if (TryParsePrice(priceText, out decimal price))
+                ".price-current",
+                ".product-price",
+                ".goods-price",
+                "[itemprop='price']",
+                ".price-block",
+                ".current-price",
+                ".price",
+                ".product-cost",
+            };
+
+            foreach (var selector in priceSelectors)
+            {
+                var priceElement = document.QuerySelector(selector);
+                if (priceElement != null)
                 {
-                    product.Price = price;
+                    var priceText = priceElement.TextContent?.Trim();
+                    // Если это элемент с microdata, пробуем взять из content атрибута
+                    if (priceElement.HasAttribute("content"))
+                    {
+                        var contentPrice = priceElement.GetAttribute("content");
+                        if (TryParsePrice(contentPrice, out decimal contentValue))
+                        {
+                            product.Price = contentValue;
+                            break;
+                        }
+                    }
+                    
+                    if (TryParsePrice(priceText, out decimal priceValue))
+                    {
+                        product.Price = priceValue;
+                        break;
+                    }
                 }
             }
             
             // Старая цена (если есть скидка)
-            var oldPriceElement = document.QuerySelector(".old-price, .previous-price, .price-old, .goods-old-price");
-            if (oldPriceElement != null)
+            var oldPriceSelectors = new[]
             {
-                var oldPriceText = oldPriceElement.TextContent?.Trim();
-                if (TryParsePrice(oldPriceText, out decimal oldPrice))
+                ".price-old",
+                ".old-price",
+                ".previous-price",
+                ".discount-old",
+                ".goods-old-price",
+                ".price-block-old",
+            };
+
+            foreach (var selector in oldPriceSelectors)
+            {
+                var oldPriceElement = document.QuerySelector(selector);
+                if (oldPriceElement != null)
                 {
-                    product.OldPrice = oldPrice;
+                    var oldPriceText = oldPriceElement.TextContent?.Trim();
+                    if (TryParsePrice(oldPriceText, out decimal oldPrice))
+                    {
+                        product.OldPrice = oldPrice;
+                        break;
+                    }
                 }
             }
             
@@ -180,50 +233,113 @@ namespace VseinstrumentiParser.Services
                 }
             }
         }
-
+            
         /// <summary>
         /// Извлечение бренда
         /// </summary>
         private string ExtractBrand(IDocument document)
         {
-            // Ищем бренд в различных местах
-            var brandElement = document.QuerySelector(".brand, .manufacturer, [itemprop='brand'], .goods-brand");
-            if (brandElement != null)
+            // Приоритетные селекторы для бренда
+            var brandSelectors = new[]
             {
-                return brandElement.TextContent?.Trim() ?? "Неизвестно";
+                ".brand-value",
+                ".product-brand",
+                ".goods-brand",
+                "[itemprop='brand']",
+                ".manufacturer",
+                ".brand",
+            };
+
+            foreach (var selector in brandSelectors)
+            {
+                var brandElement = document.QuerySelector(selector);
+                if (brandElement != null)
+                {
+                    var text = brandElement.TextContent?.Trim();
+                    if (!string.IsNullOrEmpty(text) && text.Length > 1)
+                    {
+                        return text;
+                    }
+                }
             }
             
             // Ищем в характеристиках
-            var specTable = document.QuerySelector(".specifications, .product-specs, .goods-properties");
-            if (specTable != null)
+            var specSelectors = new[]
             {
-                var rows = specTable.QuerySelectorAll("tr, .spec-row, .property");
+                ".specifications",
+                ".product-attributes",
+                ".product-specs",
+                ".goods-properties",
+                ".characteristics",
+            };
+
+            foreach (var specSelector in specSelectors)
+            {
+                var specTable = document.QuerySelector(specSelector);
+                if (specTable != null)
+                {
+                    var brand = FindBrandInSpecifications(specTable);
+                    if (!string.IsNullOrEmpty(brand))
+                    {
+                        return brand;
+                    }
+                }
+            }
+            
+            // Fallback: извлекаем первое слово из названия (если это похоже на бренд)
+            var productName = ExtractProductName(document);
+            var firstWord = productName.Split(' ').FirstOrDefault();
+            if (!string.IsNullOrEmpty(firstWord) && 
+                firstWord.Length > 2 && 
+                firstWord.Length < 30 &&
+                !firstWord.Any(char.IsDigit))
+            {
+                return firstWord;
+            }
+            
+            return "Неизвестно";
+        }
+
+        /// <summary>
+        /// Поиск бренда в спецификациях
+        /// </summary>
+        private string FindBrandInSpecifications(IElement specTable)
+        {
+            var rowSelectors = new[] { "tr", ".spec-row", ".property", ".attribute-row" };
+            var labelSelectors = new[] { "td", "th", ".spec-name", ".property-name", ".attribute-name" };
+            var valueSelectors = new[] { "td", ".spec-value", ".property-value", ".attribute-value" };
+
+            foreach (var rowSelector in rowSelectors)
+            {
+                var rows = specTable.QuerySelectorAll(rowSelector);
                 foreach (var row in rows)
                 {
-                    var cells = row.QuerySelectorAll("td, .spec-name, .property-name, .property-value");
-                    if (cells.Length >= 2)
+                    var cells = row.QuerySelectorAll(string.Join(", ", labelSelectors));
+                    if (cells.Length >= 1)
                     {
-                        var label = cells[0].TextContent?.Trim().ToLower();
-                        if (label != null && (label.Contains("бренд") || label.Contains("производитель") || label.Contains("марка") || label.Contains("brand")))
+                        var label = cells[0].TextContent?.Trim().ToLower() ?? "";
+                        
+                        // Проверяем, что это поле бренда
+                        if (label.Contains("бренд") || label.Contains("производитель") || 
+                            label.Contains("марка") || label.Contains("brand") || label.Contains("maker"))
                         {
-                            return cells[1].TextContent?.Trim() ?? "Неизвестно";
+                            // Ищем значение в соседних ячейках
+                            var allCells = row.QuerySelectorAll("td, th");
+                            var cellIndex = Array.IndexOf(cells.ToArray(), cells[0]);
+                            if (allCells.Length > cellIndex + 1)
+                            {
+                                var value = allCells[cellIndex + 1].TextContent?.Trim();
+                                if (!string.IsNullOrEmpty(value))
+                                {
+                                    return value;
+                                }
+                            }
                         }
                     }
                 }
             }
             
-            // Ищем в названии товара (часто бренд указан первым словом)
-            var productName = ExtractProductName(document);
-            if (productName.Contains(" "))
-            {
-                var firstWord = productName.Split(' ')[0];
-                if (firstWord.Length > 2 && !firstWord.Any(char.IsDigit))
-                {
-                    return firstWord;
-                }
-            }
-            
-            return "Неизвестно";
+            return null;
         }
 
         /// <summary>
@@ -326,50 +442,105 @@ namespace VseinstrumentiParser.Services
         /// </summary>
         private Dictionary<string, string> ExtractSpecifications(IDocument document)
         {
-            var specifications = new Dictionary<string, string>();
+            var specifications = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             
-            var specTable = document.QuerySelector(".specifications-table, .product-specs, .characteristics, .goods-properties");
+            // Приоритетные селекторы для таблицы характеристик
+            var tableSelectors = new[]
+            {
+                ".specifications",
+                ".product-attributes",
+                ".characteristics-table",
+                ".product-specs",
+                ".characteristics",
+                ".goods-properties",
+                "table.specifications",
+                "table.product-attributes",
+            };
+
+            IElement specTable = null;
+            foreach (var selector in tableSelectors)
+            {
+                specTable = document.QuerySelector(selector);
+                if (specTable != null) break;
+            }
+            
             if (specTable == null) return specifications;
             
-            var rows = specTable.QuerySelectorAll("tr, .spec-row, .property");
-            foreach (var row in rows)
+            var rowSelectors = new[] { "tr", ".spec-row", ".property-row", ".attribute-row", ".spec-item" };
+            var cellSelectors = new[] { "td, th", ".spec-name", ".spec-value", ".property-name", ".property-value" };
+
+            foreach (var rowSelector in rowSelectors)
             {
-                var cells = row.QuerySelectorAll("td, .spec-name, .property-name, .property-value");
-                if (cells.Length >= 2)
+                var rows = specTable.QuerySelectorAll(rowSelector);
+                
+                foreach (var row in rows)
                 {
-                    var key = cells[0].TextContent?.Trim() ?? "";
-                    var value = cells[1].TextContent?.Trim() ?? "";
+                    // Пробуем найти ячейки разными способами
+                    var allCells = row.QuerySelectorAll("td, th");
+                    var namedCells = row.QuerySelectorAll(string.Join(", ", cellSelectors));
                     
-                    if (!string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(value))
+                    var cells = allCells.Length >= 2 ? allCells : namedCells;
+                    
+                    if (cells.Length >= 2)
                     {
-                        // Особое внимание к характеристикам инструментов
-                        if (key.ToLower().Contains("мощность") || key.ToLower().Contains("power"))
-                        {
-                            specifications["Мощность"] = value;
-                        }
-                        else if (key.ToLower().Contains("тип двигателя") || key.ToLower().Contains("двигатель"))
-                        {
-                            specifications["Тип двигателя"] = value;
-                        }
-                        else if (key.ToLower().Contains("напряжение") || key.ToLower().Contains("voltage"))
-                        {
-                            specifications["Напряжение"] = value;
-                        }
-                        else if (key.ToLower().Contains("скорость") || key.ToLower().Contains("speed"))
-                        {
-                            specifications["Скорость"] = value;
-                        }
-                        else if (key.ToLower().Contains("вес") || key.ToLower().Contains("weight"))
-                        {
-                            specifications["Вес"] = value;
-                        }
+                        var key = CleanText(cells[0].TextContent);
+                        var value = CleanText(cells[1].TextContent);
                         
-                        specifications[key] = value;
+                        if (!string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(value))
+                        {
+                            // Нормализация ключей (важно для сравнения характеристик)
+                            var normalizedKey = NormalizeSpecificationKey(key);
+                            specifications[normalizedKey] = value;
+                        }
                     }
                 }
             }
             
             return specifications;
+        }
+
+        /// <summary>
+        /// Очистка текста от лишних пробелов и переносов
+        /// </summary>
+        private string CleanText(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return string.Empty;
+            return System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
+        }
+
+        /// <summary>
+        /// Нормализация ключей характеристик
+        /// </summary>
+        private string NormalizeSpecificationKey(string key)
+        {
+            var lowerKey = key.ToLowerInvariant().Trim();
+            
+            // Маппинг синонимов
+            var synonyms = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                { "мощность", "Мощность" },
+                { "тип двигателя", "Тип двигателя" },
+                { "двигатель", "Тип двигателя" },
+                { "напряжение", "Напряжение" },
+                { "voltage", "Напряжение" },
+                { "скорость", "Скорость" },
+                { "обороты", "Скорость" },
+                { "rpm", "Скорость" },
+                { "вес", "Вес" },
+                { "weight", "Вес" },
+                { "глубина реза", "Глубина реза" },
+                { "диаметр сверла", "Диаметр сверла" },
+                { "патрон", "Тип патрона" },
+                { "chuck", "Тип патрона" },
+            };
+
+            if (synonyms.TryGetValue(lowerKey, out var normalized))
+            {
+                return normalized;
+            }
+            
+            // Возвращаем оригинал с корректным регистром
+            return System.Threading.Thread.CurrentThread.CurrentCulture.TextInfo.ToTitleCase(lowerKey);
         }
 
         /// <summary>

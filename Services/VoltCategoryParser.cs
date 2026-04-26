@@ -41,53 +41,44 @@ namespace VseinstrumentiParser.Services
                 
                 var document = await _browsingContext.OpenAsync(req => req.Content(html));
                 
-                // Ищем блоки категорий (типичная структура 220-volt)
-                var categoryElements = document.QuerySelectorAll(".catalog-section, .category-item, .subcategory-list a, .catalog-category");
-                
                 var categories = new List<Category>();
                 
-                // Если не нашли через стандартные селекторы, ищем в навигации
-                if (categoryElements.Length == 0)
+                // Приоритетные селекторы для категорий (требуют проверки на реальном сайте)
+                var categorySelectors = new[]
                 {
-                    categoryElements = document.QuerySelectorAll(".left-menu a, .sidebar-nav a, .menu-catalog a");
-                }
-                
-                foreach (var element in categoryElements)
+                    ".catalog-section-item",
+                    ".category-card",
+                    ".catalog-category-item",
+                    ".subcategory-list a",
+                    ".catalog-item",
+                    ".category-link",
+                };
+
+                foreach (var selector in categorySelectors)
                 {
-                    var link = element.QuerySelector("a") ?? element;
-                    var href = link.GetAttribute("href");
-                    if (string.IsNullOrEmpty(href) || !href.Contains("/catalog-")) continue;
-                    
-                    var category = new Category
+                    var categoryElements = document.QuerySelectorAll(selector);
+                    if (categoryElements.Length > 0)
                     {
-                        Name = link.TextContent?.Trim() ?? "Без названия",
-                        Url = MakeAbsoluteUrl(href, baseUrl)
-                    };
-                    
-                    // Пытаемся получить количество товаров
-                    var countElement = element.QuerySelector(".count, .product-count, .quantity");
-                    if (countElement != null)
-                    {
-                        var countText = countElement.TextContent?.Trim();
-                        if (int.TryParse(countText?.Replace("(", "").Replace(")", "").Replace("товаров", "").Replace("товара", "").Trim(), out int count))
+                        _logger.Log($"[{DateTime.Now:HH:mm:ss}] Используется селектор категорий: {selector} ({categoryElements.Length} элементов)");
+                        
+                        foreach (var element in categoryElements)
                         {
-                            category.ProductCount = count;
+                            var category = ExtractCategoryFromElement(element, baseUrl);
+                            if (category != null && IsElectrotoolCategory(category.Name))
+                            {
+                                categories.Add(category);
+                                _logger.Log($"[{DateTime.Now:HH:mm:ss}] Найдена категория: {category.Name}");
+                            }
                         }
-                    }
-                    
-                    // Проверяем, что это категория электроинструментов
-                    if (category.Name.Contains("Дрель") || category.Name.Contains("Перфоратор") || 
-                        category.Name.Contains("Шлифмашина") || category.Name.Contains("Пила") ||
-                        category.Name.Contains("Электроинструмент") || href.Contains("elektroinstrument"))
-                    {
-                        categories.Add(category);
-                        _logger.Log($"[{DateTime.Now:HH:mm:ss}] Найдена категория: {category.Name}");
+                        
+                        if (categories.Count > 0) break;
                     }
                 }
-                
-                // Если всё ещё не нашли, используем альтернативный метод
+                    
+                // Если не нашли через стандартные селекторы, ищем в навигации
                 if (categories.Count == 0)
                 {
+                    _logger.Log($"[{DateTime.Now:HH:mm:ss}] Стандартные селекторы не нашли категории, пробуем навигацию...");
                     categories = await FallbackCategoryParsing(document, baseUrl);
                 }
                 
@@ -105,6 +96,82 @@ namespace VseinstrumentiParser.Services
                 _logger.Log($"[{DateTime.Now:HH:mm:ss}] Ошибка при парсинге категорий: {ex.Message}");
                 throw;
             }
+        }
+            
+        /// <summary>
+        /// Извлечение категории из элемента
+        /// </summary>
+        private Category ExtractCategoryFromElement(IElement element, string baseUrl)
+        {
+            var link = element.QuerySelector("a") ?? element;
+            var href = link.GetAttribute("href");
+            
+            if (string.IsNullOrEmpty(href) || !href.Contains("/catalog-")) 
+            {
+                return null;
+            }
+            
+            var category = new Category
+            {
+                Name = CleanText(link.TextContent),
+                Url = MakeAbsoluteUrl(href, baseUrl)
+            };
+            
+            // Пытаемся получить количество товаров
+            var countSelectors = new[] { ".count", ".product-count", ".quantity", "span", ".item-count" };
+            foreach (var selector in countSelectors)
+            {
+                var countElement = element.QuerySelector(selector);
+                if (countElement != null)
+                {
+                    var countText = CleanText(countElement.TextContent);
+                    if (TryParseCategoryCount(countText, out int count))
+                    {
+                        category.ProductCount = count;
+                        break;
+                    }
+                }
+            }
+            
+            return category;
+        }
+
+        /// <summary>
+        /// Проверка, что категория относится к электроинструментам
+        /// </summary>
+        private bool IsElectrotoolCategory(string categoryName)
+        {
+            var keywords = new[]
+            {
+                "дрель", "перфоратор", "шлифмашина", "пила", "электроинструмент",
+                "шуруповерт", "болгарка", "степлер", "ножовка", "лобзик",
+                "фрезер", "рубанок", "миксер", "помпа", "генератор"
+            };
+            
+            var lowerName = categoryName.ToLowerInvariant();
+            return keywords.Any(keyword => lowerName.Contains(keyword));
+        }
+
+        /// <summary>
+        /// Очистка текста
+        /// </summary>
+        private string CleanText(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return "Без названия";
+            return System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
+        }
+
+        /// <summary>
+        /// Парсинг количества товаров из строки
+        /// </summary>
+        private bool TryParseCategoryCount(string countText, out int count)
+        {
+            count = 0;
+            if (string.IsNullOrEmpty(countText)) return false;
+            
+            // Удаляем всё, кроме цифр
+            var cleanText = System.Text.RegularExpressions.Regex.Replace(countText, @"\D", "");
+            return int.TryParse(cleanText, out count);
         }
 
         /// <inheritdoc />
@@ -165,39 +232,102 @@ namespace VseinstrumentiParser.Services
                     string html = await _httpClient.GetHtmlAsync(pageUrl);
                     var document = await _browsingContext.OpenAsync(req => req.Content(html));
                     
-                    // Ищем ссылки на товары (типичные селекторы 220-volt)
-                    var productLinks = document.QuerySelectorAll(".product-card a, .catalog-item a, .item-title a, .product-name a, .goods-item a");
-                    
-                    bool foundNew = false;
-                    foreach (var link in productLinks)
+                    // Приоритетные селекторы для карточек товаров (требуют проверки)
+                    var productCardSelectors = new[]
                     {
-                        var href = link.GetAttribute("href");
-                        if (!string.IsNullOrEmpty(href) && (href.Contains("/product/") || href.Contains("/goods/")))
+                        ".product-card",
+                        ".goods-item",
+                        ".catalog-item",
+                        ".product-item",
+                        ".item",
+                        ".goods-card",
+                        ".catalog-product",
+                    };
+
+                    bool foundNew = false;
+                    
+                    foreach (var cardSelector in productCardSelectors)
+                    {
+                        var productCards = document.QuerySelectorAll(cardSelector);
+                        
+                        foreach (var card in productCards)
                         {
-                            var fullUrl = MakeAbsoluteUrl(href, categoryUrl);
-                            if (!productUrls.Contains(fullUrl))
+                            // Ищем ссылку внутри карточки
+                            var linkSelectors = new[]
                             {
-                                productUrls.Add(fullUrl);
-                                foundNew = true;
+                                "a[href*='/catalog-']",
+                                "a[href*='/product/']",
+                                "a[href*='/goods/']",
+                                "a.title",
+                                "a.product-link",
+                                ".item-title a",
+                            };
+
+                            foreach (var linkSelector in linkSelectors)
+                            {
+                                var link = card.QuerySelector(linkSelector);
+                                if (link != null)
+                                {
+                                    var href = link.GetAttribute("href");
+                                    if (!string.IsNullOrEmpty(href))
+                                    {
+                                        var fullUrl = MakeAbsoluteUrl(href, categoryUrl);
+                                        if (!productUrls.Contains(fullUrl))
+                                        {
+                                            productUrls.Add(fullUrl);
+                                            foundNew = true;
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if (productCards.Length > 0) break;
+                    }
+                    
+                    // Если не нашли карточки, пробуем искать все ссылки на товары
+                    if (productUrls.Count == 0 || !foundNew)
+                    {
+                        var directLinks = document.QuerySelectorAll("a[href*='/catalog-1'], a[href*='/product/'], a[href*='/goods/']");
+                        foreach (var link in directLinks)
+                        {
+                            var href = link.GetAttribute("href");
+                            if (!string.IsNullOrEmpty(href))
+                            {
+                                var fullUrl = MakeAbsoluteUrl(href, categoryUrl);
+                                if (!productUrls.Contains(fullUrl))
+                                {
+                                    productUrls.Add(fullUrl);
+                                    foundNew = true;
+                                }
                             }
                         }
                     }
                     
                     // Проверяем наличие следующей страницы
-                    var nextPage = document.QuerySelector(".pagination-next, .next-page, a[rel='next'], .page-next");
+                    var nextPageSelectors = new[]
+                    {
+                        ".pagination-next",
+                        ".next-page",
+                        "a[rel='next']",
+                        ".page-next",
+                        ".pagination a:last-child",
+                        ".load-more",
+                        ".show-more",
+                    };
+
+                    var nextPage = document.QuerySelector(string.Join(", ", nextPageSelectors));
+                    
                     if (nextPage == null || !foundNew)
                     {
-                        // Также проверяем, есть ли кнопка "Показать еще" (динамическая подгрузка)
-                        var showMore = document.QuerySelector(".show-more, .load-more, .js-load-more");
-                        if (showMore == null)
-                        {
-                            break;
-                        }
+                        _logger.Log($"[{DateTime.Now:HH:mm:ss}] Следующая страница не найдена или новых товаров нет");
+                        break;
                     }
                     
                     page++;
                     
-                    // Задержка между запросами
+                    // Задержка между запросами (уважение к роботу сайта)
                     await Task.Delay(1500);
                 }
                 
@@ -210,7 +340,7 @@ namespace VseinstrumentiParser.Services
                 return productUrls;
             }
         }
-
+            
         /// <summary>
         /// Альтернативный метод парсинга категорий
         /// </summary>
