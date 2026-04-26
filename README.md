@@ -24,12 +24,25 @@ VseinstrumentiParser/
 │   ├── Category.cs             # Модель категории
 │   └── Product.cs              # Модель товара
 ├── Services/
-│   ├── HttpClientService.cs    # Сервис HTTP с поддержкой Cookie
-│   ├── CategoryParser.cs       # Реализация парсера категорий
-│   ├── ProductParser.cs        # Реализация парсера товаров
+│   ├── HtmlLoader.cs           # Загрузка HTML с Polly
+│   ├── RequestPolicyExecutor.cs # Политики устойчивости
+│   ├── DataSanitizer.cs        # Очистка данных
+│   ├── HttpClientService.cs    # HTTP-клиент (backward compat)
+│   ├── CategoryParser.cs       # Парсер категорий
+│   ├── ProductParser.cs        # Парсер товаров
+│   ├── VoltProductParser.cs    # Парсер 220-volt.ru
 │   └── VseinstrumentiParserService.cs # Основной сервис
 ├── Utilities/
 │   └── RetryPolicy.cs          # Политика повторных попыток
+├── Tests/
+│   ├── UnitTests/
+│   │   ├── DataSanitizerTests.cs
+│   │   ├── HtmlLoaderTests.cs
+│   │   ├── RequestPolicyExecutorTests.cs
+│   │   ├── VoltProductParserTests.cs
+│   │   ├── CategoryParserTests.cs
+│   │   └── Fixtures/           # HTML-фикстуры для тестов
+│   └── VseinstrumentiParser.Tests.csproj
 ├── Program.cs                  # Пример использования
 └── VseinstrumentiParser.csproj # Файл проекта
 ```
@@ -59,9 +72,23 @@ VseinstrumentiParser/
 
 ```csharp
 using VseinstrumentiParser.Services;
+using VseinstrumentiParser.Services.DependencyInjection;
 
-// Создание сервиса
-using var parserService = new VseinstrumentiParserService();
+// Создаём Host для DI
+using var host = Host.CreateDefaultBuilder()
+    .ConfigureServices(services =>
+    {
+        services.AddParserHttpClient(configuration);
+        services.AddSingleton<IHtmlLoader, HtmlLoader>();
+        services.AddScoped<ICategoryParser, CategoryParser>();
+        services.AddScoped<IProductParser, ProductParser>();
+        services.AddScoped<VseinstrumentiParserService>();
+    })
+    .Build();
+
+await host.StartAsync();
+
+var parserService = host.Services.GetRequiredService<VseinstrumentiParserService>();
 
 // Получение категорий
 var categories = await parserService.GetCategoriesAsync();
@@ -111,19 +138,51 @@ public interface IProductParser
 }
 ```
 
-## Обработка ошибок
+## Тестирование
 
-Сервис включает встроенную политику повторных попыток с экспоненциальной задержкой:
-- Начальная задержка: 1 секунда
-- Множитель: 2.0
-- Максимальное количество попыток: 5
-- Максимальная задержка: 30 секунд
+### Запуск всех тестов
 
-Ошибки логируются в консоль с временными метками:
+```bash
+cd Tests
+dotnet test --verbosity normal
 ```
-[14:30:25] GET https://www.vseinstrumenti.ru/ (попытка 1/3)
-[14:30:26] Успешно получено 24567 байт
-[14:30:27] Ошибка: Connection refused. Повтор через 2000мс
+
+### Ожидаемые результаты
+
+- `DataSanitizerTests`: 14 тестов passed ✓
+- `HtmlLoaderTests`: 10 тестов passed ✓
+- `RequestPolicyExecutorTests`: 11 тестов passed ✓
+- `VoltProductParserTests`: 10 тестов passed ✓
+- `CategoryParserTests`: 12 тестов passed ✓
+- **Итого**: 57 юнит-тестов
+
+### Генерация отчёта о покрытии
+
+```bash
+dotnet test --collect:"XPlat Code Coverage"
+```
+
+### Пример теста
+
+```csharp
+[Fact]
+public async Task ParseProduct_WithValidHtml_ReturnsProduct()
+{
+    // Arrange
+    var htmlLoaderMock = new Mock<IHtmlLoader>();
+    var html = File.ReadAllText("Fixtures/product-page.html");
+    htmlLoaderMock.Setup(x => x.LoadHtmlAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                  .ReturnsAsync(html);
+    
+    var parser = new VoltProductParser(htmlLoaderMock.Object);
+    
+    // Act
+    var product = await parser.ParseProductAsync("https://example.com/product/123");
+    
+    // Assert
+    Assert.NotNull(product);
+    Assert.Equal("Дрель ударная Bosch GSB 18V", product.Name);
+}
 ```
 
 ## Настройка
@@ -134,22 +193,39 @@ public interface IProductParser
 Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36
 ```
 
-Можно изменить в конструкторе `HttpClientService`.
+Можно изменить в `HttpClientSettings` в конфигурации.
+
+### Настройки Polly
+```json
+{
+  "HttpClientSettings": {
+    "TimeoutSeconds": 30,
+    "MaxRetryAttempts": 3,
+    "InitialRetryDelayMs": 1000,
+    "MaxRetryDelayMs": 10000,
+    "CircuitBreakerExceptionCount": 5,
+    "CircuitBreakerDurationMinutes": 5
+  }
+}
+```
 
 ### Параллелизм
 По умолчанию используется до 5 одновременных запросов при пакетном парсинге. Можно настроить через параметр `maxConcurrent` в `ParseProductsAsync`.
 
 ### Задержки
-- Между запросами: 500 мс
 - Между страницами пагинации: 1000 мс
 - Между категориями: 2000 мс
 
-## Ограничения
+## Обработка ошибок
 
-1. **Структура сайта**: Парсер зависит от структуры HTML сайта vseinstrumenti.ru. При изменениях в верстке可能需要 обновить CSS-селекторы.
-2. **Rate limiting**: Слишком частые запросы могут привести к временной блокировке.
-3. **Юридические аспекты**: Убедитесь, что использование парсера соответствует условиям использования сайта и законодательству.
+Сервис включает встроенную политику повторных попыток через Polly:
+- **Retry**: до 3 попыток с экспоненциальной задержкой
+- **Timeout**: 30 секунд на запрос
+- **Circuit Breaker**: открывает цепь после 5 ошибок
 
-## Лицензия
-
-MIT
+Ошибки логируются и оборачиваются в `HttpRequestException`:
+```
+[14:30:25] Retry attempt 1 for https://example.com: Connection timeout. Waiting 1000ms
+[14:30:26] Retry attempt 2 for https://example.com: Connection timeout. Waiting 2000ms
+[14:30:28] Failed to load https://example.com after 3 attempts
+```

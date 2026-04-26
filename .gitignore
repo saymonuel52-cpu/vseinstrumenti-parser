@@ -384,4 +384,6 @@ user-secrets.json
 .env
 .env.local
 .DS_Store
-Thumbs.db
+Thumbs.dbParserWebUI/*.rar
+ParserWebUI/demo*.html
+Tests/UnitTests/Fixtures/*.html

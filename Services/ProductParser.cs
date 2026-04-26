@@ -2,22 +2,24 @@ using AngleSharp;
 using AngleSharp.Dom;
 using VseinstrumentiParser.Interfaces;
 using VseinstrumentiParser.Models;
-using VseinstrumentiParser.Services;
 
 namespace VseinstrumentiParser.Services
 {
     /// <summary>
     /// Реализация парсера товаров для сайта vseinstrumenti.ru
+    /// Использует композицию: IHtmlLoader для загрузки, DataSanitizer для очистки данных
     /// </summary>
     public class ProductParser : IProductParser
     {
-        private readonly HttpClientService _httpClient;
+        private readonly IHtmlLoader _htmlLoader;
+        private readonly DataSanitizer _sanitizer;
         private readonly ILogger _logger;
         private readonly IBrowsingContext _browsingContext;
 
-        public ProductParser(HttpClientService httpClient, ILogger? logger = null)
+        public ProductParser(IHtmlLoader htmlLoader, DataSanitizer sanitizer, ILogger? logger = null)
         {
-            _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+            _htmlLoader = htmlLoader ?? throw new ArgumentNullException(nameof(htmlLoader));
+            _sanitizer = sanitizer ?? throw new ArgumentNullException(nameof(sanitizer));
             _logger = logger ?? new ConsoleLogger();
             
             var config = Configuration.Default.WithDefaultLoader();
@@ -31,7 +33,7 @@ namespace VseinstrumentiParser.Services
             
             try
             {
-                string html = await _httpClient.GetHtmlAsync(productUrl);
+                string html = await _htmlLoader.LoadHtmlAsync(productUrl);
                 var document = await _browsingContext.OpenAsync(req => req.Content(html));
                 
                 var product = new Product
@@ -125,14 +127,14 @@ namespace VseinstrumentiParser.Services
             var nameElement = document.QuerySelector(".product-title, h1.product-name, .item-title");
             if (nameElement != null)
             {
-                return nameElement.TextContent?.Trim() ?? "Неизвестно";
+                return _sanitizer.CleanProductName(nameElement.TextContent);
             }
             
             // Альтернативные селекторы
             nameElement = document.QuerySelector("h1");
             if (nameElement != null && !string.IsNullOrEmpty(nameElement.TextContent?.Trim()))
             {
-                return nameElement.TextContent.Trim();
+                return _sanitizer.CleanProductName(nameElement.TextContent);
             }
             
             return "Неизвестно";
@@ -148,7 +150,7 @@ namespace VseinstrumentiParser.Services
             if (priceElement != null)
             {
                 var priceText = priceElement.TextContent?.Trim();
-                if (TryParsePrice(priceText, out decimal price))
+                if (_sanitizer.TryParsePrice(priceText, out decimal price))
                 {
                     product.Price = price;
                 }
@@ -159,7 +161,7 @@ namespace VseinstrumentiParser.Services
             if (oldPriceElement != null)
             {
                 var oldPriceText = oldPriceElement.TextContent?.Trim();
-                if (TryParsePrice(oldPriceText, out decimal oldPrice))
+                if (_sanitizer.TryParsePrice(oldPriceText, out decimal oldPrice))
                 {
                     product.OldPrice = oldPrice;
                 }
@@ -175,7 +177,7 @@ namespace VseinstrumentiParser.Services
             var brandElement = document.QuerySelector(".brand, .manufacturer, [itemprop='brand']");
             if (brandElement != null)
             {
-                return brandElement.TextContent?.Trim() ?? "Неизвестно";
+                return _sanitizer.CleanBrand(brandElement.TextContent);
             }
             
             // Ищем в характеристиках
@@ -191,7 +193,7 @@ namespace VseinstrumentiParser.Services
                         var label = cells[0].TextContent?.Trim().ToLower();
                         if (label != null && (label.Contains("бренд") || label.Contains("производитель") || label.Contains("марка")))
                         {
-                            return cells[1].TextContent?.Trim() ?? "Неизвестно";
+                            return _sanitizer.CleanBrand(cells[1].TextContent);
                         }
                     }
                 }
@@ -328,33 +330,11 @@ namespace VseinstrumentiParser.Services
                 if (items.Length >= 2)
                 {
                     // Предпоследний элемент - обычно категория
-                    return items[items.Length - 2].TextContent?.Trim() ?? "";
+                    return _sanitizer.CleanText(items[items.Length - 2].TextContent);
                 }
             }
             
             return "";
-        }
-
-        /// <summary>
-        /// Парсинг цены из текста
-        /// </summary>
-        private bool TryParsePrice(string? priceText, out decimal price)
-        {
-            price = 0;
-            if (string.IsNullOrEmpty(priceText)) return false;
-            
-            // Удаляем всё, кроме цифр и запятой/точки
-            var cleanText = System.Text.RegularExpressions.Regex.Replace(priceText, @"[^\d,.]", "");
-            cleanText = cleanText.Replace(",", ".");
-            
-            // Удаляем лишние точки (если это разделитель тысяч)
-            if (cleanText.Count(c => c == '.') > 1)
-            {
-                var lastDotIndex = cleanText.LastIndexOf('.');
-                cleanText = cleanText.Remove(lastDotIndex, 1).Insert(lastDotIndex, "");
-            }
-            
-            return decimal.TryParse(cleanText, out price);
         }
     }
 }

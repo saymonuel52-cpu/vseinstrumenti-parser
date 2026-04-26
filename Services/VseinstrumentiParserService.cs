@@ -6,10 +6,11 @@ namespace VseinstrumentiParser.Services
 {
     /// <summary>
     /// Основной сервис для парсинга каталога электроинструментов с vseinstrumenti.ru
+    /// Использует композицию: IHtmlLoader через ICategoryParser и IProductParser
     /// </summary>
     public class VseinstrumentiParserService : IDisposable
     {
-        private readonly HttpClientService _httpClient;
+        private readonly IHtmlLoader _htmlLoader;
         private readonly ICategoryParser _categoryParser;
         private readonly IProductParser _productParser;
         private readonly ILogger _logger;
@@ -17,14 +18,27 @@ namespace VseinstrumentiParser.Services
         private bool _disposed = false;
 
         /// <summary>
-        /// Конструктор с внедрением зависимостей
+        /// Конструктор с внедрением зависимостей (рекомендуемый)
         /// </summary>
+        public VseinstrumentiParserService(IHtmlLoader htmlLoader, ILogger? logger = null)
+        {
+            _htmlLoader = htmlLoader ?? throw new ArgumentNullException(nameof(htmlLoader));
+            _logger = logger ?? new ConsoleLogger();
+            _categoryParser = new CategoryParser(_htmlLoader, _logger);
+            _productParser = new ProductParser(_htmlLoader, _logger);
+            _retryPolicy = RetryPolicy.CreateForParsing(_logger);
+        }
+
+        /// <summary>
+        /// Конструктор для обратной совместимости (deprecated, использовать первый)
+        /// </summary>
+        [Obsolete("Используйте конструктор с IHtmlLoader")]
         public VseinstrumentiParserService(ILogger? logger = null)
         {
             _logger = logger ?? new ConsoleLogger();
-            _httpClient = new HttpClientService(_logger);
-            _categoryParser = new CategoryParser(_httpClient, _logger);
-            _productParser = new ProductParser(_httpClient, _logger);
+            var httpClient = new HttpClientService(_logger);
+            _categoryParser = new CategoryParser(httpClient, _logger);
+            _productParser = new ProductParser(httpClient, _logger);
             _retryPolicy = RetryPolicy.CreateForParsing(_logger);
         }
 
@@ -221,7 +235,6 @@ namespace VseinstrumentiParser.Services
         {
             if (!_disposed)
             {
-                _httpClient?.Dispose();
                 _disposed = true;
             }
         }

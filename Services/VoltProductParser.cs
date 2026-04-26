@@ -2,22 +2,24 @@ using AngleSharp;
 using AngleSharp.Dom;
 using VseinstrumentiParser.Interfaces;
 using VseinstrumentiParser.Models;
-using VseinstrumentiParser.Services;
 
 namespace VseinstrumentiParser.Services
 {
     /// <summary>
     /// Реализация парсера товаров для сайта 220-volt.ru
+    /// Использует композицию: IHtmlLoader для загрузки, DataSanitizer для очистки данных
     /// </summary>
     public class VoltProductParser : IProductParser
     {
-        private readonly HttpClientService _httpClient;
+        private readonly IHtmlLoader _htmlLoader;
+        private readonly DataSanitizer _sanitizer;
         private readonly ILogger _logger;
         private readonly IBrowsingContext _browsingContext;
 
-        public VoltProductParser(HttpClientService httpClient, ILogger? logger = null)
+        public VoltProductParser(IHtmlLoader htmlLoader, DataSanitizer sanitizer, ILogger? logger = null)
         {
-            _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+            _htmlLoader = htmlLoader ?? throw new ArgumentNullException(nameof(htmlLoader));
+            _sanitizer = sanitizer ?? throw new ArgumentNullException(nameof(sanitizer));
             _logger = logger ?? new ConsoleLogger();
             
             var config = Configuration.Default.WithDefaultLoader();
@@ -31,7 +33,7 @@ namespace VseinstrumentiParser.Services
             
             try
             {
-                string html = await _httpClient.GetHtmlAsync(productUrl);
+                string html = await _htmlLoader.LoadHtmlAsync(productUrl);
                 var document = await _browsingContext.OpenAsync(req => req.Content(html));
                 
                 var product = new Product
@@ -142,8 +144,8 @@ namespace VseinstrumentiParser.Services
                     var text = nameElement.TextContent?.Trim();
                     if (!string.IsNullOrEmpty(text) && text.Length > 2)
                     {
-                        // Очистка от лишних пробелов и переносов
-                        return System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
+                        // Очистка через DataSanitizer
+                        return _sanitizer.CleanProductName(text);
                     }
                 }
             }
@@ -179,14 +181,14 @@ namespace VseinstrumentiParser.Services
                     if (priceElement.HasAttribute("content"))
                     {
                         var contentPrice = priceElement.GetAttribute("content");
-                        if (TryParsePrice(contentPrice, out decimal contentValue))
+                        if (_sanitizer.TryParsePrice(contentPrice, out decimal contentValue))
                         {
                             product.Price = contentValue;
                             break;
                         }
                     }
                     
-                    if (TryParsePrice(priceText, out decimal priceValue))
+                    if (_sanitizer.TryParsePrice(priceText, out decimal priceValue))
                     {
                         product.Price = priceValue;
                         break;
@@ -211,7 +213,7 @@ namespace VseinstrumentiParser.Services
                 if (oldPriceElement != null)
                 {
                     var oldPriceText = oldPriceElement.TextContent?.Trim();
-                    if (TryParsePrice(oldPriceText, out decimal oldPrice))
+                    if (_sanitizer.TryParsePrice(oldPriceText, out decimal oldPrice))
                     {
                         product.OldPrice = oldPrice;
                         break;
@@ -226,7 +228,7 @@ namespace VseinstrumentiParser.Services
                 if (metaPrice != null)
                 {
                     var priceText = metaPrice.GetAttribute("content");
-                    if (TryParsePrice(priceText, out decimal price))
+                    if (_sanitizer.TryParsePrice(priceText, out decimal price))
                     {
                         product.Price = price;
                     }
@@ -258,7 +260,7 @@ namespace VseinstrumentiParser.Services
                     var text = brandElement.TextContent?.Trim();
                     if (!string.IsNullOrEmpty(text) && text.Length > 1)
                     {
-                        return text;
+                        return _sanitizer.CleanBrand(text);
                     }
                 }
             }
@@ -294,7 +296,7 @@ namespace VseinstrumentiParser.Services
                 firstWord.Length < 30 &&
                 !firstWord.Any(char.IsDigit))
             {
-                return firstWord;
+                return _sanitizer.CleanBrand(firstWord);
             }
             
             return "Неизвестно";
@@ -488,8 +490,8 @@ namespace VseinstrumentiParser.Services
                         
                         if (!string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(value))
                         {
-                            // Нормализация ключей (важно для сравнения характеристик)
-                            var normalizedKey = NormalizeSpecificationKey(key);
+                            // Нормализация ключей через DataSanitizer
+                            var normalizedKey = _sanitizer.NormalizeSpecificationKey(key);
                             specifications[normalizedKey] = value;
                         }
                     }
@@ -497,50 +499,6 @@ namespace VseinstrumentiParser.Services
             }
             
             return specifications;
-        }
-
-        /// <summary>
-        /// Очистка текста от лишних пробелов и переносов
-        /// </summary>
-        private string CleanText(string text)
-        {
-            if (string.IsNullOrEmpty(text)) return string.Empty;
-            return System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
-        }
-
-        /// <summary>
-        /// Нормализация ключей характеристик
-        /// </summary>
-        private string NormalizeSpecificationKey(string key)
-        {
-            var lowerKey = key.ToLowerInvariant().Trim();
-            
-            // Маппинг синонимов
-            var synonyms = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                { "мощность", "Мощность" },
-                { "тип двигателя", "Тип двигателя" },
-                { "двигатель", "Тип двигателя" },
-                { "напряжение", "Напряжение" },
-                { "voltage", "Напряжение" },
-                { "скорость", "Скорость" },
-                { "обороты", "Скорость" },
-                { "rpm", "Скорость" },
-                { "вес", "Вес" },
-                { "weight", "Вес" },
-                { "глубина реза", "Глубина реза" },
-                { "диаметр сверла", "Диаметр сверла" },
-                { "патрон", "Тип патрона" },
-                { "chuck", "Тип патрона" },
-            };
-
-            if (synonyms.TryGetValue(lowerKey, out var normalized))
-            {
-                return normalized;
-            }
-            
-            // Возвращаем оригинал с корректным регистром
-            return System.Threading.Thread.CurrentThread.CurrentCulture.TextInfo.ToTitleCase(lowerKey);
         }
 
         /// <summary>
@@ -593,32 +551,6 @@ namespace VseinstrumentiParser.Services
             }
             
             return "";
-        }
-
-        /// <summary>
-        /// Парсинг цены из текста
-        /// </summary>
-        private bool TryParsePrice(string? priceText, out decimal price)
-        {
-            price = 0;
-            if (string.IsNullOrEmpty(priceText)) return false;
-            
-            // Удаляем всё, кроме цифр и запятой/точки
-            var cleanText = System.Text.RegularExpressions.Regex.Replace(priceText, @"[^\d,.]", "");
-            cleanText = cleanText.Replace(",", ".");
-            
-            // Удаляем лишние точки (если это разделитель тысяч)
-            if (cleanText.Count(c => c == '.') > 1)
-            {
-                var parts = cleanText.Split('.');
-                if (parts.Length > 2)
-                {
-                    // Предполагаем, что последняя часть - десятичная
-                    cleanText = string.Join("", parts.Take(parts.Length - 1)) + "." + parts.Last();
-                }
-            }
-            
-            return decimal.TryParse(cleanText, out price);
         }
     }
 }

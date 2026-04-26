@@ -2,22 +2,22 @@ using AngleSharp;
 using AngleSharp.Dom;
 using VseinstrumentiParser.Interfaces;
 using VseinstrumentiParser.Models;
-using VseinstrumentiParser.Services;
 
 namespace VseinstrumentiParser.Services
 {
     /// <summary>
     /// Реализация парсера категорий для сайта vseinstrumenti.ru
+    /// Использует композицию: IHtmlLoader для загрузки HTML
     /// </summary>
     public class CategoryParser : ICategoryParser
     {
-        private readonly HttpClientService _httpClient;
+        private readonly IHtmlLoader _htmlLoader;
         private readonly ILogger _logger;
         private readonly IBrowsingContext _browsingContext;
 
-        public CategoryParser(HttpClientService httpClient, ILogger? logger = null)
+        public CategoryParser(IHtmlLoader htmlLoader, ILogger? logger = null)
         {
-            _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+            _htmlLoader = htmlLoader ?? throw new ArgumentNullException(nameof(htmlLoader));
             _logger = logger ?? new ConsoleLogger();
             
             // Настройка AngleSharp
@@ -33,11 +33,11 @@ namespace VseinstrumentiParser.Services
             try
             {
                 // Получаем главную страницу для получения кук
-                await _httpClient.GetHtmlAsync(baseUrl);
+                await _htmlLoader.LoadHtmlAsync(baseUrl);
                 
                 // Получаем страницу категорий электроинструментов
                 string url = $"{baseUrl}/category/elektroinstrumenty/";
-                string html = await _httpClient.GetHtmlAsync(url);
+                string html = await _htmlLoader.LoadHtmlAsync(url);
                 
                 var document = await _browsingContext.OpenAsync(req => req.Content(html));
                 
@@ -95,7 +95,7 @@ namespace VseinstrumentiParser.Services
             
             try
             {
-                string html = await _httpClient.GetHtmlAsync(categoryUrl);
+                string html = await _htmlLoader.LoadHtmlAsync(categoryUrl);
                 var document = await _browsingContext.OpenAsync(req => req.Content(html));
                 
                 var subCategories = new List<Category>();
@@ -143,7 +143,7 @@ namespace VseinstrumentiParser.Services
                     
                     _logger.Log($"[{DateTime.Now:HH:mm:ss}] Парсинг страницы {page}: {pageUrl}");
                     
-                    string html = await _httpClient.GetHtmlAsync(pageUrl);
+                    string html = await _htmlLoader.LoadHtmlAsync(pageUrl);
                     var document = await _browsingContext.OpenAsync(req => req.Content(html));
                     
                     // Ищем ссылки на товары
