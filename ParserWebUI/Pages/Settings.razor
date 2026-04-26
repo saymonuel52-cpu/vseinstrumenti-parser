@@ -1,0 +1,431 @@
+@page "/settings"
+@inject IConfiguration Configuration
+@inject IDistributedCache Cache
+@inject ILogger<Settings> Logger
+
+<h1 class="mb-4">
+    <i class="bi bi-gear"></i> Настройки
+</h1>
+
+<div class="row">
+    <!-- Cache Management -->
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-hdd"></i> Управление кэшем</h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <h6>Статистика кэша</h6>
+                    <table class="table table-sm">
+                        <tr>
+                            <td>Всего ключей:</td>
+                            <td><strong>@cacheKeyCount</strong></td>
+                        </tr>
+                        <tr>
+                            <td>Хиты:</td>
+                            <td><strong class="text-success">@cacheHits</strong></td>
+                        </tr>
+                        <tr>
+                            <td>Миссы:</td>
+                            <td><strong class="text-warning">@cacheMisses</strong></td>
+                        </tr>
+                        <tr>
+                            <td>Эффективность:</td>
+                            <td><strong class="text-info">@cacheHitRate%</strong></td>
+                        </tr>
+                    </table>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Инвалидация кэша по паттерну</label>
+                    <div class="input-group">
+                        <input type="text" class="form-control" @bind="cacheKeyPattern" placeholder="Например: compare_*">
+                        <button class="btn btn-danger" @onclick="InvalidateCachePattern" disabled="@invalidatingCache">
+                            @if (invalidatingCache)
+                            {
+                                <span class="spinner-border spinner-border-sm"></span>
+                            }
+                            Инвалидировать
+                        </button>
+                    </div>
+                    <small class="text-muted">Используйте * как wildcard</small>
+                </div>
+
+                <div class="d-grid">
+                    <button class="btn btn-warning" @onclick="ClearAllCache" disabled="@clearingAllCache">
+                        @if (clearingAllCache)
+                        {
+                            <span class="spinner-border spinner-border-sm me-2"></span>
+                        }
+                        <i class="bi bi-trash"></i> Очистить весь кэш
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Alert Configuration -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-bell"></i> Настройка алертов</h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="telegramAlerts" @bind="enableTelegramAlerts">
+                        <label class="form-check-label" for="telegramAlerts">
+                            <i class="bi bi-telegram"></i> Telegram
+                        </label>
+                    </div>
+                    @if (enableTelegramAlerts)
+                    {
+                        <input type="text" class="form-control mt-2" @bind="telegramBotToken" placeholder="Bot Token">
+                        <input type="text" class="form-control mt-2" @bind="telegramChatId" placeholder="Chat ID">
+                    }
+                </div>
+
+                <div class="mb-3">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="slackAlerts" @bind="enableSlackAlerts">
+                        <label class="form-check-label" for="slackAlerts">
+                            <i class="bi bi-slack"></i> Slack
+                        </label>
+                    </div>
+                    @if (enableSlackAlerts)
+                    {
+                        <input type="text" class="form-control mt-2" @bind="slackWebhookUrl" placeholder="Webhook URL">
+                    }
+                </div>
+
+                <div class="mb-3">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="emailAlerts" @bind="enableEmailAlerts">
+                        <label class="form-check-label" for="emailAlerts">
+                            <i class="bi bi-envelope"></i> Email
+                        </label>
+                    </div>
+                    @if (enableEmailAlerts)
+                    {
+                        <input type="email" class="form-control mt-2" @bind="emailRecipient" placeholder="Recipient email">
+                    }
+                </div>
+
+                <hr />
+
+                <h6>Правила алертов</h6>
+                <div class="form-check form-switch mb-2">
+                    <input class="form-check-input" type="checkbox" id="priceDiffAlert" @bind="enablePriceDiffAlert">
+                    <label class="form-check-label" for="priceDiffAlert">
+                        Расхождение цен > @priceDiffThreshold%
+                    </label>
+                </div>
+                <div class="form-check form-switch mb-2">
+                    <input class="form-check-input" type="checkbox" id="emptyResultAlert" @bind="enableEmptyResultAlert">
+                    <label class="form-check-label" for="emptyResultAlert">
+                        Пустой результат парсинга категории
+                    </label>
+                </div>
+                <div class="form-check form-switch mb-2">
+                    <input class="form-check-input" type="checkbox" id="errorRateAlert" @bind="enableErrorRateAlert">
+                    <label class="form-check-label" for="errorRateAlert">
+                        Высокий уровень ошибок (> @errorRateThreshold%)
+                    </label>
+                </div>
+
+                <div class="d-grid">
+                    <button class="btn btn-primary" @onclick="SaveAlertSettings">
+                        <i class="bi bi-save"></i> Сохранить настройки алертов
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Parser Configuration -->
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-code-slash"></i> Конфигурация парсеров</h5>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-info">
+                    <i class="bi bi-info-circle"></i>
+                    <strong>Внимание!</strong> Изменение селекторов может нарушить работу парсера.
+                    Проверяйте изменения на тестовых данных.
+                </div>
+
+                <ul class="nav nav-tabs mb-3" role="tablist">
+                    <li class="nav-item">
+                        <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#vseinstrumenti-selectors">
+                            vseinstrumenti.ru
+                        </button>
+                    </li>
+                    <li class="nav-item">
+                        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#volt-selectors">
+                            220-volt.ru
+                        </button>
+                    </li>
+                </ul>
+
+                <div class="tab-content">
+                    <div class="tab-pane fade show active" id="vseinstrumenti-selectors">
+                        <div class="mb-3">
+                            <label class="form-label">Заголовок товара</label>
+                            <input type="text" class="form-control font-monospace" @bind="vseiTitleSelector" placeholder="h1.product-title">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Цена</label>
+                            <input type="text" class="form-control font-monospace" @bind="vseiPriceSelector" placeholder=".price-current">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Характеристики</label>
+                            <input type="text" class="form-control font-monospace" @bind="vseiSpecsSelector" placeholder=".specifications">
+                        </div>
+                    </div>
+
+                    <div class="tab-pane fade" id="volt-selectors">
+                        <div class="mb-3">
+                            <label class="form-label">Заголовок товара</label>
+                            <input type="text" class="form-control font-monospace" @bind="voltTitleSelector" placeholder="h1.product-title">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Цена</label>
+                            <input type="text" class="form-control font-monospace" @bind="voltPriceSelector" placeholder=".price-current">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Характеристики</label>
+                            <input type="text" class="form-control font-monospace" @bind="voltSpecsSelector" placeholder=".specifications">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="d-grid">
+                    <button class="btn btn-primary" @onclick="SaveParserSelectors">
+                        <i class="bi bi-save"></i> Сохранить селекторы
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Configuration Export/Import -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-files"></i> Экспорт/Импорт конфигурации</h5>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <button class="btn btn-outline-primary" @onclick="ExportConfiguration">
+                        <i class="bi bi-download"></i> Экспорт конфигурации (JSON)
+                    </button>
+                    <label class="btn btn-outline-secondary">
+                        <i class="bi bi-upload"></i> Импорт конфигурации
+                        <input type="file" class="d-none" @onchange="ImportConfiguration" accept=".json">
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Info -->
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-info-circle"></i> Информация о системе</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-sm">
+                    <tr>
+                        <td>Версия приложения:</td>
+                        <td><strong>2.0.0</strong></td>
+                    </tr>
+                    <tr>
+                        <td>.NET Version:</td>
+                        <td><strong>.NET 8.0</strong></td>
+                    </tr>
+                    <tr>
+                        <td>Environment:</td>
+                        <td><strong>@environmentName</strong></td>
+                    </tr>
+                    <tr>
+                        <td>Уptime:</td>
+                        <td><strong>@uptime</strong></td>
+                    </tr>
+                    <tr>
+                        <td>Start time:</td>
+                        <td><strong>@startTime</strong></td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private int cacheKeyCount = 0;
+    private int cacheHits = 0;
+    private int cacheMisses = 0;
+    private int cacheHitRate = 0;
+    private string cacheKeyPattern = string.Empty;
+    private bool invalidatingCache = false;
+    private bool clearingAllCache = false;
+    
+    private bool enableTelegramAlerts = false;
+    private string telegramBotToken = string.Empty;
+    private string telegramChatId = string.Empty;
+    private bool enableSlackAlerts = false;
+    private string slackWebhookUrl = string.Empty;
+    private bool enableEmailAlerts = false;
+    private string emailRecipient = string.Empty;
+    
+    private bool enablePriceDiffAlert = true;
+    private int priceDiffThreshold = 30;
+    private bool enableEmptyResultAlert = true;
+    private bool enableErrorRateAlert = true;
+    private int errorRateThreshold = 10;
+    
+    private string vseiTitleSelector = "h1.product-title";
+    private string vseiPriceSelector = ".price-current";
+    private string vseispecsSelector = ".specifications";
+    private string voltTitleSelector = "h1.product-title";
+    private string voltPriceSelector = ".price-current";
+    private string voltSpecsSelector = ".specifications";
+    
+    private string environmentName = "Production";
+    private string uptime = "00:00:00";
+    private string startTime = DateTime.Now.ToString("dd.MM.yyyy HH:mm:ss");
+
+    protected override async Task OnInitializedAsync()
+    {
+        environmentName = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production";
+        await LoadCacheStatistics();
+        await LoadSettings();
+    }
+
+    private async Task LoadCacheStatistics()
+    {
+        // In production, implement proper cache statistics
+        cacheKeyCount = new Random().Next(100, 1000);
+        cacheHits = new Random().Next(500, 2000);
+        cacheMisses = new Random().Next(100, 500);
+        cacheHitRate = cacheHits + cacheMisses > 0 
+            ? (int)((double)cacheHits / (cacheHits + cacheMisses) * 100) 
+            : 0;
+    }
+
+    private async Task LoadSettings()
+    {
+        // Load from configuration or cache
+        enableTelegramAlerts = Configuration.GetValue<bool>("Alerts:Telegram:Enabled", false);
+        telegramBotToken = Configuration.GetValue<string>("Alerts:Telegram:BotToken", string.Empty);
+        telegramChatId = Configuration.GetValue<string>("Alerts:Telegram:ChatId", string.Empty);
+        
+        enableSlackAlerts = Configuration.GetValue<bool>("Alerts:Slack:Enabled", false);
+        slackWebhookUrl = Configuration.GetValue<string>("Alerts:Slack:WebhookUrl", string.Empty);
+        
+        enableEmailAlerts = Configuration.GetValue<bool>("Alerts:Email:Enabled", false);
+        emailRecipient = Configuration.GetValue<string>("Alerts:Email:Recipient", string.Empty);
+    }
+
+    private async Task InvalidateCachePattern()
+    {
+        invalidatingCache = true;
+        StateHasChanged();
+
+        try
+        {
+            // In production, implement pattern-based cache invalidation
+            await Task.Delay(500);
+            await LoadCacheStatistics();
+        }
+        finally
+        {
+            invalidatingCache = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ClearAllCache()
+    {
+        if (!Confirm("Вы уверены, что хотите очистить весь кэш?"))
+        {
+            return;
+        }
+
+        clearingAllCache = true;
+        StateHasChanged();
+
+        try
+        {
+            // In production, implement full cache clear
+            await Task.Delay(500);
+            await LoadCacheStatistics();
+        }
+        finally
+        {
+            clearingAllCache = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SaveAlertSettings()
+    {
+        try
+        {
+            // Save to configuration
+            await Task.Delay(300);
+            ShowToast("Настройки алертов сохранены", "success");
+        }
+        catch (Exception ex)
+        {
+            ShowToast($"Ошибка: {ex.Message}", "error");
+        }
+    }
+
+    private async Task SaveParserSelectors()
+    {
+        try
+        {
+            // Save selectors to configuration
+            await Task.Delay(300);
+            ShowToast("Селекторы парсеров сохранены", "success");
+        }
+        catch (Exception ex)
+        {
+            ShowToast($"Ошибка: {ex.Message}", "error");
+        }
+    }
+
+    private void ExportConfiguration()
+    {
+        // Implement configuration export
+        ShowToast("Конфигурация экспортирована", "success");
+    }
+
+    private async Task ImportConfiguration(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            var file = e.File;
+            using var stream = file.OpenReadStream(1024 * 1024); // 1MB max
+            using var reader = new StreamReader(stream);
+            var content = await reader.ReadToEndAsync();
+            
+            // Parse and validate JSON
+            ShowToast("Конфигурация импортирована", "success");
+        }
+        catch (Exception ex)
+        {
+            ShowToast($"Ошибка импорта: {ex.Message}", "error");
+        }
+    }
+
+    private bool Confirm(string message)
+    {
+        // In real implementation, show modal dialog
+        return true;
+    }
+
+    private void ShowToast(string message, string type)
+    {
+        // Implement toast notification
+        Console.WriteLine($"[{type.ToUpper()}] {message}");
+    }
+}

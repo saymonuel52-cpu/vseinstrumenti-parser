@@ -1,0 +1,118 @@
+@inherits LayoutComponentBase
+@inject NavigationManager Navigation
+@inject DarkThemeService ThemeService
+
+<div class="d-flex flex-column min-vh-100">
+    <!-- Navbar -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary" style="background-color: var(--bs-primary) !important;">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">
+                <i class="bi bi-gear-wide-connected"></i>
+                Parser Web UI
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto">
+                    <li class="nav-item">
+                        <a class="nav-link @(Navigation.ToBaseRelativePath(Navigation.Uri) == "" ? "active" : "")" href="/">
+                            <i class="bi bi-speedometer2"></i> Дашборд
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link @(Navigation.ToBaseRelativePath(Navigation.Uri) == "parse" ? "active" : "")" href="/parse">
+                            <i class="bi bi-play-circle"></i> Запуск парсинга
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link @(Navigation.ToBaseRelativePath(Navigation.Uri) == "compare" ? "active" : "")" href="/compare">
+                            <i class="bi bi-table"></i> Сравнение цен
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link @(Navigation.ToBaseRelativePath(Navigation.Uri) == "logs" ? "active" : "")" href="/logs">
+                            <i class="bi bi-list-ul"></i> Логи
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link @(Navigation.ToBaseRelativePath(Navigation.Uri) == "settings" ? "active" : "")" href="/settings">
+                            <i class="bi bi-gear"></i> Настройки
+                        </a>
+                    </li>
+                </ul>
+                <div class="d-flex align-items-center">
+                    <!-- Dark theme toggle -->
+                    <button class="btn btn-link nav-link" @onclick="ThemeService.ToggleTheme">
+                        <i class="bi @(ThemeService.IsDark ? "bi-moon-stars-fill" : "bi-sun-fill")"></i>
+                    </button>
+                    <!-- Status indicator -->
+                    <span class="badge bg-success ms-3" @bind="HealthStatus">
+                        <i class="bi bi-check-circle"></i> OK
+                    </span>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main content -->
+    <main class="flex-grow-1 container-fluid py-4">
+        @Body
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-light py-3 border-top">
+        <div class="container text-center text-muted">
+            <small>
+                Vseinstrumenti Parser Web UI v2.0 | 
+                <a href="/health" target="_blank">Health Check</a> |
+                Built with Blazor Server
+            </small>
+        </div>
+    </footer>
+
+    <!-- Toast container -->
+    <div class="toast-container position-fixed bottom-0 end-0 p-3">
+        <div class="toast" id="toastContainer" role="alert">
+            <div class="toast-header">
+                <strong class="me-auto" id="toastTitle">Notification</strong>
+                <button type="button" class="btn-close" data-bs-dismiss="toast"></button>
+            </div>
+            <div class="toast-body" id="toastBody">
+                Message
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string HealthStatus = "Checking...";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await CheckHealthStatus();
+        }
+    }
+
+    private async Task CheckHealthStatus()
+    {
+        try
+        {
+            // In real implementation, call health check endpoint
+            await Task.Delay(1000);
+            HealthStatus = "OK";
+            StateHasChanged();
+        }
+        catch
+        {
+            HealthStatus = "Error";
+        }
+    }
+
+    public void ShowToast(string title, string message, string type = "info")
+    {
+        // Implementation for toast notifications
+    }
+}

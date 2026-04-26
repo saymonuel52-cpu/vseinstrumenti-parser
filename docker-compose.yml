@@ -143,6 +143,30 @@ services:
     networks:
       - monitoring-network
 
+  # Планировщик периодического парсинга через cron
+  parser-scheduler:
+    image: alpine:latest
+    container_name: parser-scheduler
+    restart: unless-stopped
+    environment:
+      - PARSER_URL=http://vseinstrumenti-parser:8080
+      - CRON_SCHEDULE=0 */6 * * *   # Каждые 6 часов
+      - HEALTH_CHECK_URL=http://vseinstrumenti-parser:8080/health
+    volumes:
+      - ./scripts/parser-scheduler.sh:/usr/local/bin/parser-scheduler.sh
+    entrypoint: /bin/sh
+    command: -c "apk add --no-cache curl && chmod +x /usr/local/bin/parser-scheduler.sh && crond -f -l 8"
+    networks:
+      - monitoring-network
+    depends_on:
+      - vseinstrumenti-parser
+    healthcheck:
+      test: ["CMD", "pgrep", "cron"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
 volumes:
   redis-data:
   seq-data:

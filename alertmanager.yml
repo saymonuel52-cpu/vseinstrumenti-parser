@@ -1,0 +1,147 @@
+# Конфигурация Alertmanager для уведомлений
+global:
+  # Настройки по умолчанию для всех каналов уведомлений
+  smtp_smarthost: 'smtp.gmail.com:587'
+  smtp_from: 'alertmanager@yourdomain.com'
+  smtp_auth_username: 'your-email@gmail.com'
+  smtp_auth_password: '${SMTP_PASSWORD}'
+  slack_api_url: '${SLACK_WEBHOOK_URL}'
+  telegram_api_url: 'https://api.telegram.org'
+  telegram_bot_token: '${TELEGRAM_BOT_TOKEN}'
+  telegram_chat_id: '${TELEGRAM_CHAT_ID}'
+
+# Шаблоны для уведомлений
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# Маршрутизация алертов
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 1h
+  receiver: 'default-receiver'
+  routes:
+    # Критические алерты отправляем в critical-канал
+    - match:
+        severity: critical
+      receiver: 'critical-receiver'
+      continue: true
+    
+    # Предупреждения отправляем в warning-канал
+    - match:
+        severity: warning
+      receiver: 'warning-receiver'
+      continue: true
+    
+    # Алерты от конкретных сервисов
+    - match:
+        service: vseinstrumenti-parser
+      receiver: 'parser-team'
+      continue: false
+    
+    - match:
+        service: redis
+      receiver: 'infra-team'
+      continue: false
+    
+    - match:
+        service: seq
+      receiver: 'logging-team'
+      continue: false
+
+# Получатели (receivers)
+receivers:
+  # Получатель по умолчанию (webhook)
+  - name: 'default-receiver'
+    webhook_configs:
+      - url: '${WEBHOOK_URL}'
+        send_resolved: true
+        http_config:
+          bearer_token: '${WEBHOOK_TOKEN}'
+
+  # Критические алерты (Slack + Telegram)
+  - name: 'critical-receiver'
+    slack_configs:
+      - channel: '#alerts-critical'
+        title: '🚨 [CRITICAL] {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}*Alert:* {{ .Annotations.summary }}\n*Description:* {{ .Annotations.description }}\n*Severity:* {{ .Labels.severity }}\n*Service:* {{ .Labels.service }}\n*Instance:* {{ .Labels.instance }}\n*Time:* {{ .StartsAt }}\n{{ end }}'
+        send_resolved: true
+        icon_emoji: ':fire:'
+    telegram_configs:
+      - chat_id: '${TELEGRAM_CRITICAL_CHAT_ID}'
+        parse_mode: 'HTML'
+        message: '<b>🚨 CRITICAL ALERT</b>\n\n<b>Alert:</b> {{ .GroupLabels.alertname }}\n<b>Summary:</b> {{ .CommonAnnotations.summary }}\n<b>Service:</b> {{ .CommonLabels.service }}\n<b>Instance:</b> {{ .CommonLabels.instance }}\n<b>Time:</b> {{ .CommonAnnotations.timestamp }}'
+        send_resolved: true
+    email_configs:
+      - to: '${EMAIL_CRITICAL}'
+        from: 'alertmanager@yourdomain.com'
+        smarthost: 'smtp.gmail.com:587'
+        auth_username: '${SMTP_USERNAME}'
+        auth_password: '${SMTP_PASSWORD}'
+        headers:
+          Subject: '[CRITICAL] {{ .GroupLabels.alertname }}'
+        html: '{{ template "email.html" . }}'
+        send_resolved: true
+
+  # Предупреждения (Slack only)
+  - name: 'warning-receiver'
+    slack_configs:
+      - channel: '#alerts-warning'
+        title: '⚠️ [WARNING] {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}*Alert:* {{ .Annotations.summary }}\n*Description:* {{ .Annotations.description }}\n*Severity:* {{ .Labels.severity }}\n*Service:* {{ .Labels.service }}\n*Instance:* {{ .Labels.instance }}\n*Time:* {{ .StartsAt }}\n{{ end }}'
+        send_resolved: true
+        icon_emoji: ':warning:'
+    email_configs:
+      - to: '${EMAIL_WARNING}'
+        from: 'alertmanager@yourdomain.com'
+        smarthost: 'smtp.gmail.com:587'
+        auth_username: '${SMTP_USERNAME}'
+        auth_password: '${SMTP_PASSWORD}'
+        headers:
+          Subject: '[WARNING] {{ .GroupLabels.alertname }}'
+        html: '{{ template "email.html" . }}'
+        send_resolved: true
+
+  # Команда парсера
+  - name: 'parser-team'
+    slack_configs:
+      - channel: '#team-parser'
+        title: '🔧 [PARSER] {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}*Alert:* {{ .Annotations.summary }}\n*Description:* {{ .Annotations.description }}\n*Runbook:* {{ .Annotations.runbook_url }}\n*Dashboard:* {{ .Annotations.dashboard }}\n{{ end }}'
+        send_resolved: true
+    webhook_configs:
+      - url: '${PARSER_TEAM_WEBHOOK}'
+        send_resolved: true
+
+  # Инфраструктурная команда
+  - name: 'infra-team'
+    slack_configs:
+      - channel: '#team-infra'
+        title: '🛠️ [INFRA] {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}*Alert:* {{ .Annotations.summary }}\n*Service:* {{ .Labels.service }}\n*Instance:* {{ .Labels.instance }}\n{{ end }}'
+        send_resolved: true
+
+  # Команда логирования
+  - name: 'logging-team'
+    slack_configs:
+      - channel: '#team-logging'
+        title: '📝 [LOGGING] {{ .GroupLabels.alertname }}'
+        text: '{{ range .Alerts }}*Alert:* {{ .Annotations.summary }}\n*Service:* {{ .Labels.service }}\n{{ end }}'
+        send_resolved: true
+
+# Ингибирование (подавление) алертов
+inhibit_rules:
+  # Подавлять warning, если есть critical от того же сервиса
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'cluster', 'service']
+  
+  # Подавлять алерты на инстанс, если инстанс недоступен
+  - source_match:
+      alertname: 'NodeDown'
+    target_match:
+      severity: 'critical'
+    equal: ['instance']

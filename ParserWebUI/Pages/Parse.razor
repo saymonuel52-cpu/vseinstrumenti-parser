@@ -1,0 +1,444 @@
+@page "/parse"
+@inject VseinstrumentiParserService ParserService
+@inject NavigationManager Navigation
+@inject ParseProgressService ProgressService
+@inject HttpClient Http
+@implements IAsyncDisposable
+
+<h1 class="mb-4">
+    <i class="bi bi-play-circle"></i> Запуск парсинга
+</h1>
+
+<div class="row">
+    <!-- Configuration Panel -->
+    <div class="col-md-4">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-sliders"></i> Настройки парсинга</h5>
+            </div>
+            <div class="card-body">
+                <!-- Source Selection -->
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Источник данных</label>
+                    <div class="btn-group w-100" role="group">
+                        <input type="radio" class="btn-check" name="source" id="source1" value="vseinstrumenti" @bind="selectedSource">
+                        <label class="btn btn-outline-primary" for="source1">vseinstrumenti.ru</label>
+
+                        <input type="radio" class="btn-check" name="source" id="source2" value="volt" @bind="selectedSource">
+                        <label class="btn btn-outline-primary" for="source2">220-volt.ru</label>
+
+                        <input type="radio" class="btn-check" name="source" id="source3" value="both" @bind="selectedSource">
+                        <label class="btn btn-outline-primary" for="source3">Оба</label>
+                    </div>
+                </div>
+
+                <!-- Category Selection -->
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Категория</label>
+                    <input type="text" class="form-control" @bind="categoryFilter" placeholder="Поиск категории..." @onkeydown="LoadCategories">
+                    @if (showCategoryDropdown && categories.Count > 0)
+                    {
+                        <div class="list-group position-absolute w-75" style="z-index: 1000; max-height: 200px; overflow-y: auto;">
+                            @foreach (var cat in categories.Where(c => c.Name.ToLower().Contains(categoryFilter.ToLower())).Take(10))
+                            {
+                                <button class="list-group-item list-group-item-action" @onclick="() => SelectCategory(cat)">
+                                    @cat.Name
+                                </button>
+                            }
+                        </div>
+                    }
+                    @if (!string.IsNullOrEmpty(selectedCategory?.Name))
+                    {
+                        <small class="text-muted d-block mt-1">
+                            Выбрано: @selectedCategory.Name
+                            <button class="btn btn-sm btn-link p-0 ms-2" @onclick="ClearCategory">✕</button>
+                        </small>
+                    }
+                </div>
+
+                <!-- Options -->
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Опции</label>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="skipCache" @bind="skipCache">
+                        <label class="form-check-label" for="skipCache">Пропустить кэш</label>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="onlyNew" @bind="onlyNew">
+                        <label class="form-check-label" for="onlyNew">Только новые товары</label>
+                    </div>
+                </div>
+
+                <!-- Limits -->
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Лимит товаров: @maxProducts</label>
+                    <input type="range" class="form-range" min="1" max="1000" step="10" @bind="maxProducts">
+                </div>
+
+                <!-- Start Button -->
+                <button class="btn btn-success w-100 btn-lg" @onclick="StartParse" disabled="@isParsing">
+                    @if (isParsing)
+                    {
+                        <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                    }
+                    <i class="bi bi-play-fill"></i> @if (isParsing) { <text>Парсинг...</text> } else { <text>Запустить</text> }
+                </button>
+
+                <!-- Cancel Button -->
+                @if (isParsing && currentJobId != null)
+                {
+                    <button class="btn btn-danger w-100 mt-2" @onclick="CancelParse">
+                        <i class="bi bi-stop-fill"></i> Отменить
+                    </button>
+                }
+            </div>
+        </div>
+
+        <!-- Results Preview -->
+        @if (parsedProducts.Count > 0)
+        {
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="bi bi-box-arrow-down"></i> Результаты</h5>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-primary" @onclick="ExportCsv">
+                            <i class="bi bi-filetype-csv"></i> CSV
+                        </button>
+                        <button class="btn btn-outline-secondary" @onclick="ExportJson">
+                            <i class="bi bi-filetype-json"></i> JSON
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body" style="max-height: 400px; overflow-y: auto;">
+                    <table class="table table-sm table-striped">
+                        <thead>
+                            <tr>
+                                <th>Название</th>
+                                <th>Цена</th>
+                                <th>Бренд</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var product in parsedProducts.Take(20))
+                            {
+                                <tr>
+                                    <td><small>@product.Name.Substring(0, Math.Min(40, product.Name.Length))</small></td>
+                                    <td><strong>@product.Price?.ToString("N0") ₽</strong></td>
+                                    <td><small>@product.Brand</small></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                    @if (parsedProducts.Count > 20)
+                    {
+                        <div class="text-center text-muted">
+                            <small>... и еще @(parsedProducts.Count - 20) товаров</small>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+
+    <!-- Progress Panel -->
+    <div class="col-md-8">
+        <!-- Progress Bar -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-pie-chart"></i> Прогресс</h5>
+            </div>
+            <div class="card-body">
+                @if (isParsing || lastJobProgress > 0)
+                {
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between mb-1">
+                            <span>@currentJobStatus</span>
+                            <strong>@lastJobProgress.ToString("F1")%</strong>
+                        </div>
+                        <div class="progress" style="height: 30px;">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated @(lastJobProgress >= 100 ? "bg-success" : "")"
+                                 role="progressbar"
+                                 style="width: @lastJobProgress%;"
+                                 aria-valuenow="@lastJobProgress"
+                                 aria-valuemin="0"
+                                 aria-valuemax="100">
+                                @if (lastJobProgress >= 50)
+                                {
+                                    <text>@lastJobProgress.ToString("F1")%</text>
+                                }
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row text-center">
+                        <div class="col">
+                            <h6 class="text-muted">Найдено</h6>
+                            <h4 class="text-primary">@productsFound</h4>
+                        </div>
+                        <div class="col">
+                            <h6 class="text-muted">Ошибок</h6>
+                            <h4 class="text-danger">@errorsCount</h4>
+                        </div>
+                        <div class="col">
+                            <h6 class="text-muted">Время</h6>
+                            <h4 class="text-success">@elapsedTime</h4>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <div class="text-center text-muted py-5">
+                        <i class="bi bi-hourglass-split fs-1"></i>
+                        <p class="mt-3">Нажмите "Запустить" для начала парсинга</p>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- Real-time Log -->
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-terminal"></i> Лог выполнения</h5>
+                <button class="btn btn-sm btn-outline-secondary" @onclick="ClearLog">
+                    <i class="bi bi-trash"></i> Очистить
+                </button>
+            </div>
+            <div class="card-body" style="max-height: 400px; overflow-y: auto; background-color: #1e1e1e; color: #d4d4d4; font-family: 'Courier New', monospace; font-size: 0.85rem;">
+                @foreach (var logEntry in logEntries.Reverse())
+                {
+                    <div class="mb-1">
+                        <span class="text-muted">[@logEntry.Timestamp:HH:mm:ss]</span>
+                        <span class="@(logEntry.Level == "Error" ? "text-danger" : logEntry.Level == "Warning" ? "text-warning" : "text-success")">
+                            [@logEntry.Level]
+                        </span>
+                        <span class="ms-2">@logEntry.Message</span>
+                    </div>
+                }
+                @if (logEntries.Count == 0)
+                {
+                    <div class="text-muted">
+                        <i class="bi bi-info-circle"></i> Логи появятся после запуска парсинга
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string selectedSource = "vseinstrumenti";
+    private string categoryFilter = string.Empty;
+    private Category? selectedCategory;
+    private bool showCategoryDropdown = false;
+    private bool skipCache = false;
+    private bool onlyNew = false;
+    private int maxProducts = 100;
+    
+    private bool isParsing = false;
+    private string? currentJobId;
+    private string currentJobStatus = "Ожидание запуска...";
+    private double lastJobProgress = 0;
+    private int productsFound = 0;
+    private int errorsCount = 0;
+    private string elapsedTime = "00:00:00";
+    
+    private List<Category> categories = new();
+    private List<Product> parsedProducts = new();
+    private List<LogEntry> logEntries = new();
+    
+    private DateTime? parseStartTime;
+    private Timer? elapsedTimer;
+
+    protected override void OnInitialized()
+    {
+        // Subscribe to progress updates
+        ProgressService.OnProgressUpdate += OnProgressUpdate;
+        ProgressService.OnLogUpdate += OnLogUpdate;
+    }
+
+    private async Task LoadCategories()
+    {
+        showCategoryDropdown = true;
+        try
+        {
+            if (selectedSource == "volt" || selectedSource == "both")
+            {
+                var voltParser = new VoltCategoryParser(new HttpClientService());
+                categories = await voltParser.GetCategoriesAsync();
+            }
+            else
+            {
+                categories = await ParserService.GetCategoriesAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            AddLog("Error loading categories: " + ex.Message, "Error");
+        }
+        StateHasChanged();
+    }
+
+    private void SelectCategory(Category category)
+    {
+        selectedCategory = category;
+        categoryFilter = category.Name;
+        showCategoryDropdown = false;
+        StateHasChanged();
+    }
+
+    private void ClearCategory()
+    {
+        selectedCategory = null;
+        categoryFilter = string.Empty;
+    }
+
+    private async Task StartParse()
+    {
+        isParsing = true;
+        parseStartTime = DateTime.Now;
+        elapsedTimer = new Timer(_ => { elapsedTime = TimeSpan.FromSeconds((DateTime.Now - parseStartTime.Value).TotalSeconds).ToString(@"hh\:mm\:ss"); StateHasChanged(); }, null, 0, 1000);
+        
+        currentJobId = Guid.NewGuid().ToString();
+        productsFound = 0;
+        errorsCount = 0;
+        parsedProducts.Clear();
+        logEntries.Clear();
+
+        AddLog($"Начало парсинга. Источник: {selectedSource}, Макс. товаров: {maxProducts}", "Info");
+
+        try
+        {
+            if (selectedSource == "volt" || selectedSource == "both")
+            {
+                await ParseVoltAsync();
+            }
+
+            if (selectedSource == "vseinstrumenti" || selectedSource == "both")
+            {
+                await ParserService.StartParseAsync(selectedSource, selectedCategory?.Url, new ParseOptions { MaxProducts = maxProducts, SkipCache = skipCache, OnlyNew = onlyNew });
+            }
+
+            lastJobProgress = 100;
+            currentJobStatus = "Завершено";
+            AddLog($"Парсинг завершен. Найдено товаров: {parsedProducts.Count}", "Info");
+        }
+        catch (Exception ex)
+        {
+            AddLog($"Ошибка: {ex.Message}", "Error");
+            errorsCount++;
+            currentJobStatus = "Ошибка";
+        }
+        finally
+        {
+            isParsing = false;
+            elapsedTimer?.Dispose();
+            StateHasChanged();
+        }
+    }
+
+    private async Task ParseVoltAsync()
+    {
+        AddLog("Запуск парсинга 220-volt.ru...", "Info");
+        
+        var httpClient = new HttpClientService();
+        var categoryParser = new VoltCategoryParser(httpClient);
+        var productParser = new VoltProductParser(httpClient);
+
+        var categories = await categoryParser.GetCategoriesAsync();
+        AddLog($"Найдено {categories.Count} категорий", "Info");
+
+        if (selectedCategory != null)
+        {
+            var productUrls = await categoryParser.GetProductUrlsFromCategoryAsync(selectedCategory.Url, maxPages: 3);
+            AddLog($"Найдено {productUrls.Count} товаров в категории", "Info");
+
+            foreach (var url in productUrls.Take(maxProducts))
+            {
+                if (!isParsing) break;
+
+                try
+                {
+                    var product = await productParser.ParseProductAsync(url);
+                    parsedProducts.Add(product);
+                    productsFound++;
+                    lastJobProgress = (parsedProducts.Count * 100.0) / Math.Max(maxProducts, productUrls.Count);
+                    AddLog($"Парсен: {product.Name}", "Info");
+                }
+                catch (Exception ex)
+                {
+                    errorsCount++;
+                    AddLog($"Ошибка парсинга {url}: {ex.Message}", "Error");
+                }
+
+                await Task.Delay(500);
+            }
+        }
+    }
+
+    private async Task CancelParse()
+    {
+        isParsing = false;
+        currentJobStatus = "Отменено";
+        AddLog("Парсинг отменен пользователем", "Warning");
+    }
+
+    private void OnProgressUpdate(object? sender, ProgressUpdateEventArgs e)
+    {
+        lastJobProgress = e.Progress;
+        productsFound = e.ProductsFound;
+        StateHasChanged();
+    }
+
+    private void OnLogUpdate(object? sender, LogUpdateEventArgs e)
+    {
+        AddLog(e.Message, e.Level);
+    }
+
+    private void AddLog(string message, string level = "Info")
+    {
+        logEntries.Add(new LogEntry
+        {
+            Timestamp = DateTime.Now,
+            Level = level,
+            Message = message
+        });
+
+        if (logEntries.Count > 100)
+        {
+            logEntries.RemoveAt(0);
+        }
+
+        StateHasChanged();
+    }
+
+    private void ClearLog()
+    {
+        logEntries.Clear();
+    }
+
+    private void ExportCsv()
+    {
+        // Implement CSV export
+        AddLog("Экспорт в CSV будет реализован", "Info");
+    }
+
+    private void ExportJson()
+    {
+        // Implement JSON export
+        AddLog("Экспорт в JSON будет реализован", "Info");
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        ProgressService.OnProgressUpdate -= OnProgressUpdate;
+        ProgressService.OnLogUpdate -= OnLogUpdate;
+        elapsedTimer?.Dispose();
+    }
+
+    public class LogEntry
+    {
+        public DateTime Timestamp { get; set; }
+        public string Level { get; set; } = "Info";
+        public string Message { get; set; } = string.Empty;
+    }
+}

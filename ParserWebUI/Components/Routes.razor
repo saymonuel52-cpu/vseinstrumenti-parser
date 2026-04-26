@@ -1,0 +1,9 @@
+<Routes>
+    <RouteView RouteData="context.RouteData" DefaultLayout="typeof(Layout.MainLayout)" />
+    <FocusOnNavigate RouteData="context.RouteData" Selector="h1" />
+</Routes>
+
+@code {
+    [SupplyParameterFromRoute]
+    public RouteData? RouteData { get; set; }
+}

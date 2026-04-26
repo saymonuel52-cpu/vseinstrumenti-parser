@@ -1,0 +1,99 @@
+# Базовый алерт на недоступность приложения
+# Prometheus Alertmanager Rule
+# Разместите этот файл в директории prometheus/alerts/ и добавьте ссылку в prometheus.yml
+
+groups:
+  - name: availability_alerts
+    interval: 30s
+    rules:
+      # Алерт: приложение недоступно (health check failed)
+      - alert: VseinstrumentiParserDown
+        expr: up{job="vseinstrumenti-parser"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: vseinstrumenti-parser
+          environment: production
+        annotations:
+          summary: "Приложение vseinstrumenti-parser недоступно"
+          description: "Экземпляр {{ $labels.instance }} приложения vseinstrumenti-parser недоступен более 1 минуты. Health check возвращает ошибку."
+          runbook_url: "https://github.com/your-org/vseinstrumenti-parser/wiki/Runbook#application-down"
+          dashboard: "http://grafana:3000/d/vseinstrumenti-parser/overview"
+
+      # Алерт: высокая задержка ответа health check
+      - alert: HighHealthCheckLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="vseinstrumenti-parser", endpoint="/health"}[5m])) > 5
+        for: 2m
+        labels:
+          severity: warning
+          service: vseinstrumenti-parser
+          environment: production
+        annotations:
+          summary: "Высокая задержка health check"
+          description: "95-й перцентиль времени ответа health check превышает 5 секунд на инстансе {{ $labels.instance }}."
+          dashboard: "http://grafana:3000/d/vseinstrumenti-parser/performance"
+
+      # Алерт: ошибки HTTP запросов
+      - alert: HighHttpErrorRate
+        expr: rate(http_requests_total{job="vseinstrumenti-parser", status=~"5.."}[5m]) / rate(http_requests_total{job="vseinstrumenti-parser"}[5m]) > 0.05
+        for: 3m
+        labels:
+          severity: warning
+          service: vseinstrumenti-parser
+          environment: production
+        annotations:
+          summary: "Высокий процент HTTP ошибок 5xx"
+          description: "Более 5% HTTP запросов возвращают ошибки 5xx на инстансе {{ $labels.instance }} за последние 5 минут."
+          dashboard: "http://grafana:3000/d/vseinstrumenti-parser/errors"
+
+      # Алерт: высокое использование памяти
+      - alert: HighMemoryUsage
+        expr: process_working_set_bytes{job="vseinstrumenti-parser"} / 1024 / 1024 / 1024 > 2
+        for: 5m
+        labels:
+          severity: warning
+          service: vseinstrumenti-parser
+          environment: production
+        annotations:
+          summary: "Высокое использование памяти"
+          description: "Приложение использует более 2 ГБ памяти на инстансе {{ $labels.instance }}."
+          dashboard: "http://grafana:3000/d/vseinstrumenti-parser/resources"
+
+      # Алерт: недоступность внешних сайтов (vseinstrumenti.ru, 220-volt.ru)
+      - alert: ExternalSiteUnavailable
+        expr: probe_success{job="blackbox", target=~".*(vseinstrumenti\.ru|220-volt\.ru).*"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: external-sites
+          environment: production
+        annotations:
+          summary: "Внешний сайт недоступен"
+          description: "Сайт {{ $labels.target }} недоступен более 5 минут. Это может повлиять на работу парсера."
+          runbook_url: "https://github.com/your-org/vseinstrumenti-parser/wiki/Runbook#external-site-down"
+
+      # Алерт: Redis недоступен
+      - alert: RedisDown
+        expr: redis_up == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: redis
+          environment: production
+        annotations:
+          summary: "Redis недоступен"
+          description: "Redis кэш недоступен более 2 минут. Это повлияет на производительность парсера."
+          dashboard: "http://grafana:3000/d/vseinstrumenti-parser/redis"
+
+      # Алерт: Seq недоступен
+      - alert: SeqDown
+        expr: up{job="seq"} == 0
+        for: 2m
+        labels:
+          severity: warning
+          service: seq
+          environment: production
+        annotations:
+          summary: "Seq недоступен"
+          description: "Система логирования Seq недоступна более 2 минут. Логи могут быть потеряны."
+          dashboard: "http://grafana:3000/d/vseinstrumenti-parser/logging"

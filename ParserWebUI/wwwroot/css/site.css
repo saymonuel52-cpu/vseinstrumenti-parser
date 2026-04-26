@@ -1,0 +1,265 @@
+:root {
+    --bs-primary: #0d6efd;
+    --bs-success: #198754;
+    --bs-warning: #ffc107;
+    --bs-danger: #dc3545;
+    --bs-info: #0dcaf0;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+.min-vh-100 {
+    min-height: 100vh;
+}
+
+/* Dark Theme */
+[data-bs-theme="dark"] {
+    --bs-body-bg: #212529;
+    --bs-body-color: #e9ecef;
+}
+
+[data-bs-theme="dark"] .card {
+    background-color: #2b3035;
+    border-color: #495057;
+}
+
+[data-bs-theme="dark"] .table {
+    --bs-table-bg: transparent;
+}
+
+/* Progress Bar Animation */
+.progress-bar-animated {
+    animation: progress-bar-stripes 1s linear infinite;
+}
+
+@keyframes progress-bar-stripes {
+    0% { background-position-x: 1rem; }
+}
+
+/* Toast Notifications */
+.toast-container {
+    z-index: 1060;
+}
+
+/* Responsive Tables */
+.table-responsive {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* Loading Spinner */
+.spinner-border {
+    width: 3rem;
+    height: 3rem;
+}
+
+/* Card Hover Effects */
+.card {
+    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+}
+
+.card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+}
+
+/* Badge Styles */
+.badge {
+    font-weight: 500;
+    padding: 0.35em 0.65em;
+}
+
+/* Navigation */
+.navbar-brand {
+    font-weight: 700;
+    font-size: 1.25rem;
+}
+
+.nav-link {
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.nav-link:hover {
+    transform: translateY(-1px);
+}
+
+/* Active Nav Link */
+.nav-link.active {
+    background-color: rgba(255, 255, 255, 0.1) !important;
+    border-radius: 0.25rem;
+}
+
+/* Form Controls */
+.form-control:focus,
+.form-select:focus {
+    border-color: var(--bs-primary);
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+/* Button Group Spacing */
+.btn-group .btn {
+    flex: 1;
+}
+
+/* Stats Cards */
+.card.text-center h2,
+.card.text-center h3,
+.card.text-center h4 {
+    margin-bottom: 0;
+}
+
+/* Table Sticky Header */
+.table thead.sticky-top {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+/* Log Console Style */
+.card-body[style*="background-color: #1e1e1e"] {
+    border-radius: 0.25rem;
+}
+
+/* Code Blocks */
+code {
+    background-color: rgba(0, 0, 0, 0.1);
+    padding: 0.125rem 0.25rem;
+    border-radius: 0.25rem;
+    font-size: 0.875em;
+}
+
+[data-bs-theme="dark"] code {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Alert Improvements */
+.alert {
+    border: none;
+    border-left: 4px solid;
+}
+
+.alert-info {
+    border-left-color: var(--bs-info);
+}
+
+.alert-success {
+    border-left-color: var(--bs-success);
+}
+
+.alert-warning {
+    border-left-color: var(--bs-warning);
+}
+
+.alert-danger {
+    border-left-color: var(--bs-danger);
+}
+
+/* Pagination */
+.pagination .page-link {
+    cursor: pointer;
+}
+
+/* Modal Confirmations */
+.modal-backdrop {
+    z-index: 1040;
+}
+
+.modal {
+    z-index: 1050;
+}
+
+/* Footer */
+footer {
+    font-size: 0.875rem;
+}
+
+/* Utility Classes */
+.font-monospace {
+    font-family: var(--bs-font-monospace) !important;
+}
+
+.text-small {
+    font-size: 0.875rem;
+}
+
+/* Print Styles */
+@media print {
+    .navbar,
+    .btn,
+    footer {
+        display: none !important;
+    }
+    
+    .card {
+        break-inside: avoid;
+    }
+}
+
+/* Loading Overlay */
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+}
+
+/* Status Indicators */
+.status-dot {
+    display: inline-block;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    margin-right: 0.25rem;
+}
+
+.status-dot.success {
+    background-color: var(--bs-success);
+}
+
+.status-dot.warning {
+    background-color: var(--bs-warning);
+}
+
+.status-dot.danger {
+    background-color: var(--bs-danger);
+}
+
+/* Animations */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+.fade-in {
+    animation: fadeIn 0.3s ease-in;
+}
+
+/* Responsive Adjustments */
+@media (max-width: 768px) {
+    .card {
+        margin-bottom: 1rem;
+    }
+    
+    .btn-group .btn {
+        flex: unset;
+        width: 100%;
+        margin-bottom: 0.25rem;
+    }
+    
+    table {
+        font-size: 0.875rem;
+    }
+}

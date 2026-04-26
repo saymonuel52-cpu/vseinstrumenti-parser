@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  # Web UI
+  webui:
+    build:
+      context: .
+      dockerfile: ParserWebUI/Dockerfile
+    container_name: parser-webui
+    ports:
+      - "5000:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8080
+      - Redis__ConnectionString=redis:6379
+      - Seq__Url=http://seq:5341
+      - ApiKey=${WEBUI_API_KEY:-change-me-in-production}
+    depends_on:
+      - redis
+      - seq
+    networks:
+      - parser-network
+    restart: unless-stopped
+    volumes:
+      - ./logs/webui:/app/logs
+      - ./data:/app/data
+
+  # Redis (already in your compose)
+  redis:
+    image: redis:7-alpine
+    container_name: parser-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - parser-network
+    restart: unless-stopped
+
+  # Seq for logging
+  seq:
+    image: datalust/seq:latest
+    container_name: parser-seq
+    ports:
+      - "5341:80"
+    environment:
+      - ACCEPT_EULA=Y
+    volumes:
+      - seq_data:/data
+    networks:
+      - parser-network
+    restart: unless-stopped
+
+networks:
+  parser-network:
+    driver: bridge
+
+volumes:
+  redis_data:
+  seq_data:

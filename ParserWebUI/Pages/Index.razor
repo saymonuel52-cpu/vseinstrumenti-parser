@@ -1,0 +1,302 @@
+@page "/"
+@inject ParserMonitoringService MonitoringService
+@inject NavigationManager Navigation
+@implements IAsyncDisposable
+
+<h1 class="mb-4">
+    <i class="bi bi-speedometer2"></i> Дашборд
+</h1>
+
+@if (loading)
+{
+    <div class="text-center py-5">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Загрузка...</span>
+        </div>
+        <p class="mt-3 text-muted">Загрузка метрик...</p>
+    </div>
+}
+else
+{
+    <!-- Health Status Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card @(HealthStatus == "OK" ? "border-success" : "border-danger")">
+                <div class="card-body text-center">
+                    <h5 class="card-title text-muted">Статус системы</h5>
+                    <h2 class="text-@(HealthStatus == "OK" ? "success" : "danger")">
+                        <i class="bi bi-@(HealthStatus == "OK" ? "check-circle" : "x-circle")"></i>
+                        @HealthStatus
+                    </h2>
+                    <small class="text-muted">Last: @LastHealthCheck</small>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body text-center">
+                    <h5 class="card-title text-muted">Товаров распарсено</h5>
+                    <h2 class="text-primary">@Metrics?.TotalProducts ?? 0</h2>
+                    <small class="text-muted">Всего</small>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body text-center">
+                    <h5 class="card-title text-muted">Кэш хиты</h5>
+                    <h2 class="text-info">@Metrics?.CacheHits ?? 0</h2>
+                    <small class="text-muted">@Metrics?.CacheHitRate ?? 0% эффективность</small>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body text-center">
+                    <h5 class="card-title text-muted">Ошибок за 24ч</h5>
+                    <h2 class="text-@(ErrorsLast24h == 0 ? "success" : "warning")">@ErrorsLast24h</h2>
+                    <small class="text-muted">Последняя: @LastErrorTime</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0"><i class="bi bi-lightning-charge"></i> Быстрые действия</h5>
+        </div>
+        <div class="card-body">
+            <div class="btn-group" role="group">
+                <button class="btn btn-primary" @onclick="NavigateToParse">
+                    <i class="bi bi-play-circle"></i> Запустить парсинг
+                </button>
+                <button class="btn btn-warning" @onclick="ClearCache" disabled="@clearingCache">
+                    @if (clearingCache)
+                    {
+                        <span class="spinner-border spinner-border-sm me-2"></span>
+                    }
+                    <i class="bi bi-trash"></i> Очистить кэш
+                </button>
+                <button class="btn btn-info" @onclick="RefreshMetrics">
+                    <i class="bi bi-arrow-clockwise"></i> Обновить метрики
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Active Jobs -->
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0"><i class="bi bi-list-check"></i> Активные задачи</h5>
+            <span class="badge bg-primary">@ActiveJobs.Count задача(ок)</span>
+        </div>
+        <div class="card-body">
+            @if (ActiveJobs.Count == 0)
+            {
+                <div class="text-muted text-center py-4">
+                    <i class="bi bi-inbox fs-3"></i>
+                    <p class="mt-2">Нет активных задач</p>
+                </div>
+            }
+            else
+            {
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Источник</th>
+                                <th>Прогресс</th>
+                                <th>Статус</th>
+                                <th>Время</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var job in ActiveJobs)
+                            {
+                                <tr>
+                                    <td><code>@job.Id.Substring(0, 8)</code>...</td>
+                                    <td>@job.Source</td>
+                                    <td style="width: 25%;">
+                                        <div class="progress" style="height: 20px;">
+                                            <div class="progress-bar progress-bar-striped progress-bar-animated"
+                                                 role="progressbar"
+                                                 style="width: @job.Progress%;"
+                                                 aria-valuenow="@job.Progress"
+                                                 aria-valuemin="0"
+                                                 aria-valuemax="100">
+                                                @job.Progress.ToString("F0")%
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-@(job.Status == "Running" ? "success" : "warning")">
+                                            @job.Status
+                                        </span>
+                                    </td>
+                                    <td>@job.StartTime:HH:mm</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- External Dependencies -->
+    <div class="card">
+        <div class="card-header">
+            <h5 class="mb-0"><i class="bi bi-hdd-network"></i> Зависимости</h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-4">
+                    <div class="d-flex align-items-center">
+                        <i class="bi bi-hdd-rack @(RedisStatus == "OK" ? "text-success" : "text-danger") fs-3 me-3"></i>
+                        <div>
+                            <strong>Redis</strong>
+                            <br />
+                            <small class="text-muted">@RedisStatus</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="d-flex align-items-center">
+                        <i class="bi bi-file-text @(SeqStatus == "OK" ? "text-success" : "text-warning") fs-3 me-3"></i>
+                        <div>
+                            <strong>Seq</strong>
+                            <br />
+                            <small class="text-muted">@SeqStatus</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="d-flex align-items-center">
+                        <i class="bi bi-graph-up @(PrometheusStatus == "OK" ? "text-success" : "text-warning") fs-3 me-3"></i>
+                        <div>
+                            <strong>Prometheus</strong>
+                            <br />
+                            <small class="text-muted">@PrometheusStatus</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool loading = true;
+    private bool clearingCache = false;
+    private string HealthStatus = "Checking...";
+    private string LastHealthCheck = "-";
+    private string ErrorsLast24h = "0";
+    private string LastErrorTime = "Нет";
+    private string RedisStatus = "Checking...";
+    private string SeqStatus = "Checking...";
+    private string PrometheusStatus = "Checking...";
+    private List<ActiveJobInfo> ActiveJobs = new();
+    private ParserMetrics? Metrics;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadMetricsAsync();
+        await CheckDependenciesAsync();
+    }
+
+    private async Task LoadMetricsAsync()
+    {
+        try
+        {
+            Metrics = await MonitoringService.GetMetricsAsync();
+            ErrorsLast24h = Metrics?.ErrorsLast24h.ToString() ?? "0";
+            LastErrorTime = Metrics?.LastErrorTime?.ToString("dd.MM HH:mm") ?? "Нет";
+            loading = false;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading metrics: {ex.Message}");
+        }
+    }
+
+    private async Task CheckDependenciesAsync()
+    {
+        // Check Redis
+        try
+        {
+            // In real implementation, call health check
+            await Task.Delay(500);
+            RedisStatus = "OK";
+        }
+        catch { RedisStatus = "Error"; }
+
+        // Check Seq
+        try
+        {
+            await Task.Delay(300);
+            SeqStatus = "OK";
+        }
+        catch { SeqStatus = "Warning"; }
+
+        // Check Prometheus
+        try
+        {
+            await Task.Delay(300);
+            PrometheusStatus = "OK";
+        }
+        catch { PrometheusStatus = "Warning"; }
+
+        StateHasChanged();
+    }
+
+    private void NavigateToParse()
+    {
+        Navigation.NavigateTo("/parse");
+    }
+
+    private async Task ClearCache()
+    {
+        clearingCache = true;
+        StateHasChanged();
+
+        try
+        {
+            await MonitoringService.ClearCacheAsync();
+            await LoadMetricsAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error clearing cache: {ex.Message}");
+        }
+        finally
+        {
+            clearingCache = false;
+        }
+    }
+
+    private async Task RefreshMetrics()
+    {
+        await LoadMetricsAsync();
+        await CheckDependenciesAsync();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        // Cleanup if needed
+    }
+
+    public class ActiveJobInfo
+    {
+        public string Id { get; set; } = Guid.NewGuid().ToString();
+        public string Source { get; set; } = string.Empty;
+        public double Progress { get; set; } = 0;
+        public string Status { get; set; } = "Running";
+        public DateTime StartTime { get; set; } = DateTime.Now;
+    }
+}

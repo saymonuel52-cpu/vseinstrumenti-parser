@@ -1,0 +1,269 @@
+@page "/logs"
+@inject HttpClient Http
+@inject ILogger<Logs> Logger
+
+<h1 class="mb-4">
+    <i class="bi bi-list-ul"></i> Логи и мониторинг
+</h1>
+
+<!-- Filters -->
+<div class="card mb-4">
+    <div class="card-body">
+        <div class="row g-3">
+            <div class="col-md-3">
+                <label class="form-label">Уровень</label>
+                <select class="form-select" @bind="selectedLogLevel">
+                    <option value="">Все</option>
+                    <option value="Error">Error</option>
+                    <option value="Warning">Warning</option>
+                    <option value="Information">Information</option>
+                    <option value="Debug">Debug</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Источник</label>
+                <input type="text" class="form-control" @bind="logSource" placeholder="Filter by source">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">С периода</label>
+                <input type="datetime-local" class="form-control" @bind="startDate">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">По периода</label>
+                <input type="datetime-local" class="form-control" @bind="endDate">
+            </div>
+            <div class="col-md-12">
+                <label class="form-label">Поиск по тексту</label>
+                <div class="input-group">
+                    <input type="text" class="form-control" @bind="searchText" placeholder="Search in log messages...">
+                    <button class="btn btn-primary" @onclick="SearchLogs">
+                        <i class="bi bi-search"></i>
+                    </button>
+                    <button class="btn btn-outline-secondary" @onclick="LoadLogs">
+                        <i class="bi bi-arrow-clockwise"></i> Обновить
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Summary Cards -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="text-muted">Всего логов</h5>
+                <h3>@totalLogs</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center border-danger">
+            <div class="card-body">
+                <h5 class="text-muted">Ошибок</h5>
+                <h3 class="text-danger">@errorCount</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center border-warning">
+            <div class="card-body">
+                <h5 class="text-muted">Предупреждений</h5>
+                <h3 class="text-warning">@warningCount</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center">
+            <div class="card-body">
+                <h5 class="text-muted">Парсингов за 24ч</h5>
+                <h3 class="text-success">@parsesLast24h</h3>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Log Table -->
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-terminal"></i> Последние логи</h5>
+        <div class="btn-group btn-group-sm">
+            <button class="btn btn-outline-primary" @onclick="DownloadLogs">
+                <i class="bi bi-download"></i> Скачать
+            </button>
+            <button class="btn btn-outline-danger" @onclick="ClearLogs">
+                <i class="bi bi-trash"></i> Очистить
+            </button>
+        </div>
+    </div>
+    <div class="card-body" style="max-height: 600px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: 0.85rem;">
+        @if (loading)
+        {
+            <div class="text-center py-5">
+                <div class="spinner-border text-primary" role="status"></div>
+            </div>
+        }
+        else if (logs.Count == 0)
+        {
+            <div class="text-muted text-center py-5">
+                <i class="bi bi-inbox fs-3"></i>
+                <p class="mt-2">Логи не найдены</p>
+            </div>
+        }
+        else
+        {
+            <table class="table table-sm table-hover">
+                <thead class="table-dark sticky-top">
+                    <tr>
+                        <th style="width: 15%;">Время</th>
+                        <th style="width: 10%;">Уровень</th>
+                        <th style="width: 15%;">Источник</th>
+                        <th>Сообщение</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var log in logs)
+                    {
+                        <tr class="@(log.Level == "Error" ? "table-danger" : log.Level == "Warning" ? "table-warning" : "")">
+                            <td><small class="text-muted">@log.Timestamp.ToString("dd.MM HH:mm:ss")</small></td>
+                            <td>
+                                <span class="badge bg-@(log.Level == "Error" ? "danger" : log.Level == "Warning" ? "warning" : "info")">
+                                    @log.Level
+                                </span>
+                            </td>
+                            <td><small>@log.Source</small></td>
+                            <td><small>@log.Message</small></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+</div>
+
+@code {
+    private string selectedLogLevel = "";
+    private string logSource = "";
+    private string searchText = "";
+    private string startDate = DateTime.Now.AddDays(-7).ToString("yyyy-MM-ddTHH:mm");
+    private string endDate = DateTime.Now.ToString("yyyy-MM-ddTHH:mm");
+    
+    private bool loading = false;
+    private List<LogEntry> logs = new();
+    
+    private int totalLogs = 0;
+    private int errorCount = 0;
+    private int warningCount = 0;
+    private int parsesLast24h = 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadLogs();
+    }
+
+    private async Task LoadLogs()
+    {
+        loading = true;
+        StateHasChanged();
+
+        try
+        {
+            // In production, integrate with Seq API
+            // For demo, generate sample logs
+            await Task.Delay(500);
+            
+            logs = GenerateSampleLogs();
+            totalLogs = logs.Count;
+            errorCount = logs.Count(l => l.Level == "Error");
+            warningCount = logs.Count(l => l.Level == "Warning");
+            parsesLast24h = new Random().Next(50, 200);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load logs");
+        }
+        finally
+        {
+            loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private List<LogEntry> GenerateSampleLogs()
+    {
+        var levels = new[] { "Information", "Warning", "Error", "Debug" };
+        var sources = new[] { "VseinstrumentiParser", "VoltParser", "HttpClientService", "CacheService", "MonitoringService" };
+        var messages = new[]
+        {
+            "Начало парсинга категории",
+            "Товар распарсен успешно",
+            "Ошибка подключения к сайту",
+            "Кэш пропущен",
+            "Получено {count} товаров",
+            "Retry attempt {attempt} of {max}",
+            "Circuit breaker opened",
+            "Health check passed"
+        };
+
+        var logs = new List<LogEntry>();
+        var random = new Random();
+
+        for (int i = 0; i < 100; i++)
+        {
+            var timestamp = DateTime.Now - TimeSpan.FromMinutes(random.Next(0, 1440));
+            var level = levels[random.Next(0, levels.Length)];
+            
+            logs.Add(new LogEntry
+            {
+                Timestamp = timestamp,
+                Level = level,
+                Source = sources[random.Next(0, sources.Length)],
+                Message = messages[random.Next(0, messages.Length)]
+                    .Replace("{count}", random.Next(10, 500).ToString())
+                    .Replace("{attempt}", random.Next(1, 4).ToString())
+                    .Replace("{max}", "5")
+            });
+        }
+
+        return logs.OrderByDescending(l => l.Timestamp).ToList();
+    }
+
+    private async Task SearchLogs()
+    {
+        await LoadLogs();
+        // Filter in memory for demo
+        if (!string.IsNullOrEmpty(searchText))
+        {
+            logs = logs.Where(l => l.Message.ToLower().Contains(searchText.ToLower())).ToList();
+        }
+        if (!string.IsNullOrEmpty(selectedLogLevel))
+        {
+            logs = logs.Where(l => l.Level == selectedLogLevel).ToList();
+        }
+        if (!string.IsNullOrEmpty(logSource))
+        {
+            logs = logs.Where(l => l.Source.ToLower().Contains(logSource.ToLower())).ToList();
+        }
+        StateHasChanged();
+    }
+
+    private void DownloadLogs()
+    {
+        // Implement download functionality
+    }
+
+    private void ClearLogs()
+    {
+        logs.Clear();
+        StateHasChanged();
+    }
+
+    public class LogEntry
+    {
+        public DateTime Timestamp { get; set; }
+        public string Level { get; set; } = "Information";
+        public string Source { get; set; } = string.Empty;
+        public string Message { get; set; } = string.Empty;
+    }
+}
